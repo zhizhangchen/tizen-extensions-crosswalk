@@ -52,6 +52,7 @@
     'power/power.gypi',
     'tizen/tizen.gypi',
     'time/time.gypi',
-    'bluetooth/bluetooth.gypi'
+    'bluetooth/bluetooth.gypi',
+    'call_history/call_history.gypi'
   },
 }

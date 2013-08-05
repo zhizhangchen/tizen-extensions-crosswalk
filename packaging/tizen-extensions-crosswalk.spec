@@ -10,6 +10,7 @@ Source1:    %{name}
 Source1001: %{name}.manifest
 
 BuildRequires: python
+BuildRequires: pkgconfig(wrt-plugins-tizen-callhistory)
 BuildRequires: pkgconfig(capi-system-device)
 BuildRequires: pkgconfig(capi-system-power)
 BuildRequires: pkgconfig(pmapi)

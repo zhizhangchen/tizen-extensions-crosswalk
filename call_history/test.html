@@ -1,0 +1,44 @@
+<html>
+	<body>
+	hello
+	<script>
+        document.write("From JavaScript");
+        tizen.callhistory.find(function (entries) {
+            console.log("call history:" + JSON.stringify(entries));
+
+        });
+        var onListenerCB = {
+            onadded: function(newItems) {
+                console.log("New Item added");
+                for (var i in newItems) {
+                    console.log("Item " + i + " startTime: " + newItems[i].startTime);
+                }
+            },
+            onchanged: function(changedItems) {
+                console.log("Items changed");
+                for (var i in changedItems) {
+                    console.log("Item " + i + " direction: " + changedItems[i].direction);
+                }
+            },
+            onremoved: function(removedItems) {
+                console.log("Items removed");
+                for(var i in removedItems)  {
+                    console.log("Item " + i + " : " + removedItems[i]);
+                }
+            }
+        };
+
+        try {
+            // Registers a call history callback
+            var handle = tizen.callhistory.addChangeListener(onListenerCB);
+            console.log("Handle: " + handle);
+
+            // Unregisters a previously registered listener
+            tizen.callhistory.removeChangeListener(handle);
+        } catch (error) {
+            console.log("Exception - code: " + error.name + " message: " + error.message);
+        }
+       
+	</script>
+	</body>
+</html>
