@@ -27,7 +27,7 @@
               '<!@(pkg-config --cflags dpl-efl)',
               '<!@(pkg-config --cflags wrt-plugins-commons)',
               '<!@(pkg-config --cflags wrt-plugins-tizen-tizen)',
-              '-std=c++0x'
+              '-std=c++0x -DDPL_LOGS_ENABLED'
             ],
           },
           'link_settings': {

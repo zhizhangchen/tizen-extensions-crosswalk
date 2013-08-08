@@ -3,10 +3,6 @@
 	hello
 	<script>
         document.write("From JavaScript");
-        tizen.callhistory.find(function (entries) {
-            console.log("call history:" + JSON.stringify(entries));
-
-        });
         var onListenerCB = {
             onadded: function(newItems) {
                 console.log("New Item added");
@@ -34,10 +30,16 @@
             console.log("Handle: " + handle);
 
             // Unregisters a previously registered listener
-            tizen.callhistory.removeChangeListener(handle);
+            //tizen.callhistory.removeChangeListener(handle);
         } catch (error) {
             console.log("Exception - code: " + error.name + " message: " + error.message);
         }
+        tizen.callhistory.find(function (entries) {
+            console.log("call history:" + JSON.stringify(entries));
+            console.log("removing...");
+            tizen.callhistory.remove(entries);
+
+        });
        
 	</script>
 	</body>

@@ -35,5 +35,11 @@ exports.find =  function (successCallback, errorCallback, filter, sortMode, limi
 }
 var listeners = [];
 exports.addChangeListener =  function (onListenerCB) {
-    return extension.internal.sendSyncMessage(JSON.stringify({cmd: "addChangeListener"}));
+    return Number(extension.internal.sendSyncMessage(JSON.stringify({cmd: "addChangeListener"})));
+}
+exports.removeChangeListener =  function (onListenerCB) {
+    extension.postMessage(JSON.stringify({cmd: "removeChangeListener"}));
+}
+exports.remove =  function (entry) {
+    extension.postMessage(JSON.stringify({cmd: "remove", uid:entry.uid}));
 }

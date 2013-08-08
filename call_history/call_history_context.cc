@@ -9,7 +9,59 @@
 #include <wrt-plugins-tizen/callhistory/ICallHistory.h>
 #include <wrt-plugins-tizen/callhistory/ResponseDispatcher.h>
 #include <dpl/thread.h>
+#include <dlog.h>
 using namespace DeviceAPI::CallHistory;
+using namespace WrtDeviceApis::Commons;
+class CallHistoryXWalkResponseDispatcher :
+    public WrtDeviceApis::Commons::EventAnswerReceiver<EventFindCallHistory>,
+    public WrtDeviceApis::Commons::EventAnswerReceiver<EventRemoveBatch>,
+    public WrtDeviceApis::Commons::EventAnswerReceiver<EventRemoveAll>
+{
+public:
+    void OnAnswerReceived(const EventFindCallHistoryPtr& event){
+        printf("found call history\n");
+    }
+    void OnAnswerReceived(const EventRemoveBatchPtr& event){
+        LOGD("removed batch\n");
+    }
+    void OnAnswerReceived(const EventRemoveAllPtr& event){
+        LOGD("removed all\n");
+    }
+    static CallHistoryXWalkResponseDispatcher& getInstance() {
+            static CallHistoryXWalkResponseDispatcher dispatcher;
+                return dispatcher;
+    }
+
+protected:
+    CallHistoryXWalkResponseDispatcher():
+        EventAnswerReceiver<EventFindCallHistory>(ThreadEnum::APPLICATION_THREAD),
+        EventAnswerReceiver<EventRemoveBatch>(ThreadEnum::APPLICATION_THREAD),
+        EventAnswerReceiver<EventRemoveAll>(ThreadEnum::APPLICATION_THREAD) {
+    }
+
+
+};
+
+class CallHistoryXWalkController :
+    public WrtDeviceApis::Commons::EventListener<EventCallHistoryListener>
+{
+public:
+    static CallHistoryXWalkController& getInstance() {
+        static CallHistoryXWalkController controller;
+        return controller;
+    }
+
+    void onAnswerReceived(const EventCallHistoryListenerPtr& event){
+        printf("answer received!\n");
+        LOG(LOG_DEBUG, "API/CALLHISTORY", "answer received!");
+    }
+
+protected:
+    CallHistoryXWalkController():WrtDeviceApis::Commons::EventListener<EventCallHistoryListener>(WrtDeviceApis::Commons::ThreadEnum::APPLICATION_THREAD){
+    }
+};
+
+ICallHistoryPtr callHistory = CallHistoryFactory::getInstance().getCallHistoryObject();
 class HistoryThread: public DPL::Thread {
     protected:
     /*virtual int ThreadEntry() {
@@ -40,11 +92,11 @@ CXWalkExtension* xwalk_extension_init(int32_t api_version) {
   return ExtensionAdapter<CallHistoryContext>::Initialize();
 }
 
-DPL::Thread* callHistoryThread = new HistoryThread();
+DPL::Thread* appThread = WrtDeviceApis::Commons::ThreadPool::getInstance().getThreadRef(WrtDeviceApis::Commons::ThreadEnum::APPLICATION_THREAD);
 CallHistoryContext::CallHistoryContext(ContextAPI* api)
   : api_(api) {
-  printf("Creating call history context\n");
-  callHistoryThread->Run();
+  appThread->Run();
+  WrtDeviceApis::Commons::ThreadPool::getInstance().getThreadRef(WrtDeviceApis::Commons::ThreadEnum::CALLHISTORY_THREAD)->Run();
   PlatformInitialize();
 }
 
@@ -58,23 +110,29 @@ const char CallHistoryContext::name[] = "tizen.callhistory";
 extern const char kSource_call_history_api[];
 
 const char* CallHistoryContext::GetJavaScript() {
-  printf("Getting callhistory javascript \n");
   return kSource_call_history_api;
 }
 
 static void deleteMessage(void* api, void* message) {
-    printf("Deleting message...\n");
     delete (picojson::value*)message;
+}
+static std::string long2string(long l){
+    std::string number;
+    std::stringstream strstream;
+    strstream << l;
+    strstream >> number;
+    return number;
 }
 static void processMessage(void* api, void* message) {
     picojson::value* msg = (picojson::value*)message;
     if (msg->get("cmd").to_str() ==  "find") {
-        ICallHistoryPtr callHistory(CallHistoryFactory::getInstance().getCallHistoryObject());
-        printf("Got call history ptr\n");
         EventFindCallHistoryPtr event(new EventFindCallHistory());
-        event->setForSynchronousCall();
+        //event->setForSynchronousCall();
+        event->setForAsynchronousCall(&CallHistoryXWalkResponseDispatcher::getInstance());
         callHistory->find(event);
-        printf("Entries: %u\n", event->getResult()->size());//->first()->getEntryId());
+        /*if (event->getResult()->size() == 0)
+            return;*/
+        /*printf("Entries: %u\n", event->getResult()->size());//->first()->getEntryId());
         printf("Entry ID: %u\n", event->getResult()->at(0)->getEntryId());//->first()->getEntryId());
         printf("Service ID: %s\n", event->getResult()->at(0)->getServiceId().c_str());//->first()->getEntryId());
         printf("Call type : %s\n", event->getResult()->at(0)->getCallType().c_str());//->first()->getEntryId());
@@ -89,12 +147,17 @@ static void processMessage(void* api, void* message) {
         printf("Recording: %d\n", event->getResult()->at(0)->getRecording()->size());//->first()->getEntryId());
         printf("Cost : %d\n", event->getResult()->at(0)->getCost());
         printf("Currency : %s\n", event->getResult()->at(0)->getCurrency().c_str());
-        printf("Filter Mark : %d\n", event->getResult()->at(0)->getFilterMark());
-        picojson::value result = picojson::value(picojson::object());
+        printf("Filter Mark : %d\n", event->getResult()->at(0)->getFilterMark());*/
+        /*picojson::value result = picojson::value(picojson::object());
         picojson::object& output_map = result.get<picojson::object>();
         output_map["remote_party"] = picojson::value(event->getResult()->at(0)->getRemoteParties()->at(0)->getRemoteParty());
+        output_map["uid"] = picojson::value(static_cast<double>(event->getResult()->at(0)->getEntryId()));
         output_map["_reply_id"] = picojson::value(msg->get("_reply_id"));
-        ((ContextAPI*)api)->PostMessage(result.serialize().c_str());
+        ((ContextAPI*)api)->PostMessage(result.serialize().c_str());*/
+    }
+    else if (msg->get("cmd").to_str() ==  "remove") {
+        printf("removing %s\n", msg->get("uid").to_str().c_str());
+        callHistory->remove(static_cast<long>(msg->get("uid").get<double>()));
     }
 
 }
@@ -102,7 +165,10 @@ DPL::WaitableEvent* wait = new DPL::WaitableEvent;
 static void processSyncMessage(void* api, void* message) {
     picojson::value* msg = (picojson::value*)message;
     if (msg->get("cmd").to_str() ==  "addChangeListener") {
-        ((ContextAPI*)api)->SetSyncReply("123456");
+        EventCallHistoryListenerEmitterPtr emitter(new EventCallHistoryListenerEmitter);
+        emitter->setListener(&CallHistoryXWalkController::getInstance());
+        long id = callHistory->addListener(emitter);
+        ((ContextAPI*)api)->SetSyncReply(long2string(id).c_str());
     }
     wait->Signal();
 }
@@ -117,11 +183,10 @@ void CallHistoryContext::HandleMessage(const char* message) {
   }
 
   std::string cmd = v.get("cmd").to_str();
-  callHistoryThread->PushEvent(api_, &processMessage , &deleteMessage,  &v);
+  appThread->PushEvent(api_, &processMessage , &deleteMessage,  &v);
 
 }
 void CallHistoryContext::HandleSyncMessage(const char* message) {
-  printf("handling sync message: %s\n", message);
   picojson::value& v = *new picojson::value();
 
   std::string err;
@@ -131,7 +196,7 @@ void CallHistoryContext::HandleSyncMessage(const char* message) {
     return;
   }
 
-  callHistoryThread->PushEvent(api_, &processSyncMessage, &deleteMessage, &v);
+  appThread->PushEvent(api_, &processSyncMessage, &deleteMessage, &v);
   DPL::WaitForSingleHandle(wait->GetHandle());
 }
 
