@@ -4,161 +4,106 @@
 
 #include "call_history/call_history_context.h"
 #include "common/picojson.h"
-#include <memory>
-#include <wrt-plugins-tizen/callhistory/CallHistoryFactory.h>
-#include <wrt-plugins-tizen/callhistory/ICallHistory.h>
-#include <wrt-plugins-tizen/callhistory/ResponseDispatcher.h>
-#include <dpl/thread.h>
-#include <dlog.h>
-using namespace DeviceAPI::CallHistory;
-using namespace WrtDeviceApis::Commons;
-class CallHistoryXWalkResponseDispatcher :
-  public WrtDeviceApis::Commons::EventAnswerReceiver<EventFindCallHistory>,
-  public WrtDeviceApis::Commons::EventAnswerReceiver<EventRemoveBatch>,
-  public WrtDeviceApis::Commons::EventAnswerReceiver<EventRemoveAll>
-{
-  public:
-    void OnAnswerReceived(const EventFindCallHistoryPtr& event){
-      printf("found call history\n");
-      printf("Entries: %u\n", event->getResult()->size());//->first()->getEntryId());
-      printf("Entry ID: %u\n", event->getResult()->at(0)->getEntryId());//->first()->getEntryId());
-      printf("Service ID: %s\n", event->getResult()->at(0)->getServiceId().c_str());//->first()->getEntryId());
-      printf("Call type : %s\n", event->getResult()->at(0)->getCallType().c_str());//->first()->getEntryId());
-      printf("Tags : %d\n", event->getResult()->at(0)->getTags()->size());//->first()->getEntryId());
-      printf("Tag 0 : %s\n", event->getResult()->at(0)->getTags()->at(0).c_str());//->first()->getEntryId());
-      printf("Remote parties : %d\n", event->getResult()->at(0)->getRemoteParties()->size());//->first()->getEntryId());
-      printf("Remote party 0 : %s, person id 0:\n", event->getResult()->at(0)->getRemoteParties()->at(0)->getRemoteParty().c_str(),  event->getResult()->at(0)->getRemoteParties()->at(0)->getPersonId().c_str());//->first()->getEntryId());
-      printf("Start time : %d\n", event->getResult()->at(0)->getStartTime());
-      printf("Duration : %d\n", event->getResult()->at(0)->getDuration());
-      printf("End Reason : %s\n", event->getResult()->at(0)->getEndReason().c_str());//->first()->getEntryId());
-      printf("Direction: %s\n", event->getResult()->at(0)->getDirection().c_str());//->first()->getEntryId());
-      printf("Recording: %d\n", event->getResult()->at(0)->getRecording()->size());//->first()->getEntryId());
-      printf("Cost : %d\n", event->getResult()->at(0)->getCost());
-      printf("Currency : %s\n", event->getResult()->at(0)->getCurrency().c_str());
-      printf("Filter Mark : %d\n", event->getResult()->at(0)->getFilterMark());
-    }
-    void OnAnswerReceived(const EventRemoveBatchPtr& event){
-      LOGD("removed batch\n");
-    }
-    void OnAnswerReceived(const EventRemoveAllPtr& event){
-      LOGD("removed all\n");
-    }
-    static CallHistoryXWalkResponseDispatcher& getInstance() {
-      static CallHistoryXWalkResponseDispatcher dispatcher;
-      return dispatcher;
-    }
-
-  protected:
-    CallHistoryXWalkResponseDispatcher():
-      EventAnswerReceiver<EventFindCallHistory>(ThreadEnum::APPLICATION_THREAD),
-      EventAnswerReceiver<EventRemoveBatch>(ThreadEnum::APPLICATION_THREAD),
-      EventAnswerReceiver<EventRemoveAll>(ThreadEnum::APPLICATION_THREAD) {
-      }
-};
-
-class CallHistoryXWalkController :
-  public WrtDeviceApis::Commons::EventListener<EventCallHistoryListener>
-{
-  public:
-    static CallHistoryXWalkController& getInstance() {
-      static CallHistoryXWalkController controller;
-      return controller;
-    }
-
-    void onAnswerReceived(const EventCallHistoryListenerPtr& event){
-      printf("answer received!\n");
-    }
-
-  protected:
-    CallHistoryXWalkController():WrtDeviceApis::Commons::EventListener<EventCallHistoryListener>(WrtDeviceApis::Commons::ThreadEnum::APPLICATION_THREAD){
-    }
-};
-
-ICallHistoryPtr callHistory = CallHistoryFactory::getInstance().getCallHistoryObject();
+#include "plugin.h"
+#include <JavaScriptCore/JavaScript.h>
+#include <JavaScriptCore/JSObjectRef.h>
+#include "javascript_interface.h"
+#include "dpl/foreach.h"
+#include <dpl/scoped_array.h>
+#include <dlfcn.h>
+#include <Commons/WrtAccess/WrtAccess.h>
 CXWalkExtension* xwalk_extension_init(int32_t api_version) {
+
   return ExtensionAdapter<CallHistoryContext>::Initialize();
 }
+static void _init() __attribute__((constructor));
+void _init() {
+  printf("############################Loading call history extension.\n");
+  if (!dlopen("/usr/lib/libjsc-wrapper.so", RTLD_NOW|RTLD_GLOBAL))
+    printf("Error loading jsc wrapper\n");
+  else 
+    printf("#############Loaded JSC wrapper!\n");
+  if (!dlopen("/usr/lib/libwrt-plugin-loading.so", RTLD_NOW))
+    printf("Error loading libwrt-plugin-loading.so\n");
+  else 
+    printf("#############Loaded libwrt-plugin-loading.so!\n");
+}
 
-DPL::Thread* appThread = WrtDeviceApis::Commons::ThreadPool::getInstance().getThreadRef(WrtDeviceApis::Commons::ThreadEnum::APPLICATION_THREAD);
 CallHistoryContext::CallHistoryContext(ContextAPI* api)
   : api_(api) {
-    appThread->Run();
-    WrtDeviceApis::Commons::ThreadPool::getInstance().getThreadRef(WrtDeviceApis::Commons::ThreadEnum::CALLHISTORY_THREAD)->Run();
-    PlatformInitialize();
-  }
+  PlatformInitialize();
+}
 
 CallHistoryContext::~CallHistoryContext() {
   PlatformUninitialize();
 }
 
 const char CallHistoryContext::name[] = "tizen.callhistory";
+std::string toString(const JSStringRef& arg)
+{
+    Assert(arg);
+    std::string result;
+    size_t jsSize = JSStringGetMaximumUTF8CStringSize(arg);
+    if (jsSize > 0) {
+        ++jsSize;
+        DPL::ScopedArray<char> buffer(new char[jsSize]);
+        size_t written = JSStringGetUTF8CString(arg, buffer.Get(), jsSize);
+        if (written > jsSize) {
+            LogError("Conversion could not be fully performed.");
+            return std::string();
+        }
+        result = buffer.Get();
+    }
+
+    return result;
+}
+
+/**
+ * Converts JSValueRef to std::string
+ * */
+std::string toString(JSContextRef ctx, JSValueRef value) {
+  Assert(ctx && value);
+  std::string result;
+  JSStringRef str = JSValueToStringCopy(ctx, value, NULL);
+  result = toString(str);
+  JSStringRelease(str);
+  return result;
+}
+
 
 // This will be generated from call_history_api.js.
 extern const char kSource_call_history_api[];
 
 const char* CallHistoryContext::GetJavaScript() {
-  return kSource_call_history_api;
+  printf("loading callhistory lib\n");
+  PluginPtr plugin = Plugin::LoadFromFile("/usr/lib/wrt-plugins/tizen-callhistory/libwrt-plugins-tizen-callhistory.so");
+  plugin->OnWidgetStart(0);
+  WrtDeviceApis::Commons::AceFunction func;
+  if (!(WrtDeviceApis::Commons::WrtAccessSingleton::Instance().checkAccessControl(func))) {
+    printf("Function is not allowed to run\n");
+  }       
+  printf("loaded callhistory lib\n");
+  Plugin::ClassPtrList list = plugin->GetClassList();
+  printf("got callhistory lib\n");
+  JSGlobalContextRef gContext = JSGlobalContextCreateInGroup(NULL, NULL);
+  for (std::list<Plugin::ClassPtr>::iterator it = list->begin(); it != list->end(); it ++) {
+    printf("calling class template of %s\n", (*it)->getName().c_str());
+    //JSClassRef classRef = static_cast<JSClassRef>(const_cast<JSObjectDeclaration::ClassTemplate>((*it)->getClassTemplate()));
+    JSObjectPtr objectInstance = JavaScriptInterfaceSingleton::Instance().
+              createObject(gContext, *it);
+    JavaScriptInterface::PropertiesList list  = JavaScriptInterfaceSingleton::Instance().getObjectPropertiesList(gContext, objectInstance);
+    FOREACH(it, list) printf("property: %s\n", it->c_str());
+    JSObjectPtr functionObject = JavaScriptInterfaceSingleton::Instance().getJSObjectProperty(gContext, objectInstance, "addChangeListener");
+
+    JSValueRef  arguments[1];
+    JSValueRef result;
+    result = JSObjectCallAsFunction(gContext, static_cast<JSObjectRef>(functionObject->getObject()), static_cast<JSObjectRef>(objectInstance->getObject()), 0, arguments, NULL);
+    toString(gContext, result);
+    //printf("got class name from class template: %s\n", classRef->className().c_str());
+  }
+  return "exports.find =  function (successCallback, errorCallback, filter, sortMode, limit, offset) { }";
 }
 
-static void deleteMessage(void* api, void* message) {
-  delete (picojson::value*)message;
-}
-static std::string long2string(long l){
-  std::string number;
-  std::stringstream strstream;
-  strstream << l;
-  strstream >> number;
-  return number;
-}
-static void processMessage(void* api, void* message) {
-  picojson::value* msg = (picojson::value*)message;
-  if (msg->get("cmd").to_str() ==  "find") {
-    EventFindCallHistoryPtr event(new EventFindCallHistory());
-    //event->setForSynchronousCall();
-    event->setForAsynchronousCall(&CallHistoryXWalkResponseDispatcher::getInstance());
-    callHistory->find(event);
-    /*if (event->getResult()->size() == 0)
-      return;*/
-    /*printf("Entries: %u\n", event->getResult()->size());//->first()->getEntryId());
-      printf("Entry ID: %u\n", event->getResult()->at(0)->getEntryId());//->first()->getEntryId());
-      printf("Service ID: %s\n", event->getResult()->at(0)->getServiceId().c_str());//->first()->getEntryId());
-      printf("Call type : %s\n", event->getResult()->at(0)->getCallType().c_str());//->first()->getEntryId());
-      printf("Tags : %d\n", event->getResult()->at(0)->getTags()->size());//->first()->getEntryId());
-      printf("Tag 0 : %s\n", event->getResult()->at(0)->getTags()->at(0).c_str());//->first()->getEntryId());
-      printf("Remote parties : %d\n", event->getResult()->at(0)->getRemoteParties()->size());//->first()->getEntryId());
-      printf("Remote party 0 : %s, person id 0:\n", event->getResult()->at(0)->getRemoteParties()->at(0)->getRemoteParty().c_str(),  event->getResult()->at(0)->getRemoteParties()->at(0)->getPersonId().c_str());//->first()->getEntryId());
-      printf("Start time : %d\n", event->getResult()->at(0)->getStartTime());
-      printf("Duration : %d\n", event->getResult()->at(0)->getDuration());
-      printf("End Reason : %s\n", event->getResult()->at(0)->getEndReason().c_str());//->first()->getEntryId());
-      printf("Direction: %s\n", event->getResult()->at(0)->getDirection().c_str());//->first()->getEntryId());
-      printf("Recording: %d\n", event->getResult()->at(0)->getRecording()->size());//->first()->getEntryId());
-      printf("Cost : %d\n", event->getResult()->at(0)->getCost());
-      printf("Currency : %s\n", event->getResult()->at(0)->getCurrency().c_str());
-      printf("Filter Mark : %d\n", event->getResult()->at(0)->getFilterMark());*/
-    /*picojson::value result = picojson::value(picojson::object());
-      picojson::object& output_map = result.get<picojson::object>();
-      output_map["remote_party"] = picojson::value(event->getResult()->at(0)->getRemoteParties()->at(0)->getRemoteParty());
-      output_map["uid"] = picojson::value(static_cast<double>(event->getResult()->at(0)->getEntryId()));
-      output_map["_reply_id"] = picojson::value(msg->get("_reply_id"));
-      ((ContextAPI*)api)->PostMessage(result.serialize().c_str());*/
-  }
-  else if (msg->get("cmd").to_str() ==  "remove") {
-    printf("removing %s\n", msg->get("uid").to_str().c_str());
-    callHistory->remove(static_cast<long>(msg->get("uid").get<double>()));
-  }
-
-}
-DPL::WaitableEvent* wait = new DPL::WaitableEvent;
-static void processSyncMessage(void* api, void* message) {
-  picojson::value* msg = (picojson::value*)message;
-  if (msg->get("cmd").to_str() ==  "addChangeListener") {
-    EventCallHistoryListenerEmitterPtr emitter(new EventCallHistoryListenerEmitter);
-    emitter->setListener(&CallHistoryXWalkController::getInstance());
-    long id = callHistory->addListener(emitter);
-    ((ContextAPI*)api)->SetSyncReply(long2string(id).c_str());
-  }
-  wait->Signal();
-}
 void CallHistoryContext::HandleMessage(const char* message) {
   picojson::value& v = *new picojson::value();
 
@@ -170,7 +115,6 @@ void CallHistoryContext::HandleMessage(const char* message) {
   }
 
   std::string cmd = v.get("cmd").to_str();
-  appThread->PushEvent(api_, &processMessage , &deleteMessage,  &v);
 
 }
 void CallHistoryContext::HandleSyncMessage(const char* message) {
@@ -183,7 +127,5 @@ void CallHistoryContext::HandleSyncMessage(const char* message) {
     return;
   }
 
-  appThread->PushEvent(api_, &processSyncMessage, &deleteMessage, &v);
-  DPL::WaitForSingleHandle(wait->GetHandle());
 }
 

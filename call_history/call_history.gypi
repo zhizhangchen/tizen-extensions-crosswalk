@@ -12,7 +12,52 @@
       ],
       'dependencies': [
         'wrt-plugins-tizen-callhistory',
-        'vconf',
+        #'jsc-wrapper',
+        #'vconf',
+      ],
+    },
+    {
+      'target_name': 'jsc-wrapper',
+      'type': 'loadable_module',
+      'sources': [
+        'jsc_wrapper.cc',
+      ],
+      'dependencies': [
+        'ewebkit2',
+      ],
+      'conditions': [
+        ['type=="mobile"', {
+          'link_settings': {
+            #'ldflags': [
+            #  '-Lout/Default'
+            #],
+            #'libraries': [
+            #  '-ljsc-wrapper'
+            #],
+          }
+        }],
+      ],
+    },
+    {
+      'target_name': 'ewebkit2',
+      'type': 'none',
+      'conditions': [
+        ['type=="mobile"', {
+          'direct_dependent_settings': {
+            'cflags': [
+              '<!@(pkg-config --cflags ewebkit2)',
+              '<!@(pkg-config --cflags wrt-plugins-commons)',
+              '<!@(pkg-config --cflags wrt-plugins-types)',
+              '<!@(pkg-config --cflags security-client)',
+              '-std=c++0x -DDPL_LOGS_ENABLED'
+            ],
+          },
+          'link_settings': {
+            'libraries': [
+              '-ldl'
+            ],
+          }
+        }],
       ],
     },
 
@@ -23,20 +68,17 @@
         ['type=="mobile"', {
           'direct_dependent_settings': {
             'cflags': [
-              '<!@(pkg-config --cflags wrt-plugins-tizen-callhistory)',
-              '<!@(pkg-config --cflags dpl-efl)',
-              '<!@(pkg-config --cflags wrt-plugins-commons)',
-              '<!@(pkg-config --cflags wrt-plugins-tizen-tizen)',
+              '<!@(pkg-config --cflags wrt-plugin-loading)',
+              '<!@(pkg-config --cflags wrt-plugins-types)',
               '-std=c++0x -DDPL_LOGS_ENABLED'
             ],
           },
           'link_settings': {
             'ldflags': [
-              '<!@(pkg-config --libs-only-L --libs-only-other wrt-plugins-tizen-callhistory)',
+              '<!@(pkg-config --libs-only-L --libs-only-other wrt-plugin-loading)',
             ],
             'libraries': [
-              '<!@(pkg-config --libs-only-l wrt-plugins-tizen-callhistory)',
-              '-lwrt-plugins-tizen-callhistory',
+              #'<!@(pkg-config --libs-only-l wrt-plugin-loading)',
             ],
           }
         }],
