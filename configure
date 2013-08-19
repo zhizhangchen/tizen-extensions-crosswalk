@@ -8,4 +8,4 @@ if [ ! `which gyp` ]; then
    exit 1
 fi
 
-gyp -D build=Debug -D type=mobile --depth=. tizen-wrt.gyp
+gyp -d all -D build=Debug -D type=mobile --depth=. tizen-wrt.gyp

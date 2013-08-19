@@ -4,23 +4,26 @@
 
 #include "call_history/call_history_context.h"
 #include "common/picojson.h"
-#include "plugin.h"
-#include <JavaScriptCore/JavaScript.h>
-#include <JavaScriptCore/JSObjectRef.h>
-#include "javascript_interface.h"
-#include "dpl/foreach.h"
-#include <dpl/scoped_array.h>
 #include <dlfcn.h>
-#include <Commons/WrtAccess/WrtAccess.h>
+/*void* create_ecore_main_loop(void*){
+  pthread_t ecore_main_thread;
+  pthread_create(&ecore_main_thread, NULL,  start_ecore_main_loop, NULL);
+  int *status;
+  pthread_join(ecore_main_thread, (void**) status);
+}*/
 CXWalkExtension* xwalk_extension_init(int32_t api_version) {
 
+  printf("xwalk_extension_init returning\n");
   return ExtensionAdapter<CallHistoryContext>::Initialize();
 }
-static void _init() __attribute__((constructor));
-void _init() {
-  printf("############################Loading call history extension.\n");
-  if (!dlopen("/usr/lib/libjsc-wrapper.so", RTLD_NOW|RTLD_GLOBAL))
-    printf("Error loading jsc wrapper\n");
+static void * jsc_handle;
+void load_lib() {
+  if (!dlopen("/usr/lib/libaccess-control-bypass.so", RTLD_NOW|RTLD_GLOBAL))
+    printf("Error loading libaccess-contorl-bypass.so:%s\n", dlerror());
+  else 
+    printf("#############Loaded libaccess-check-bypass.so!\n");
+  if (!(jsc_handle = dlopen("/usr/lib/libjsc-wrapper.so", RTLD_NOW)))
+    printf("Error loading jsc wrapper:%s\n", dlerror());
   else 
     printf("#############Loaded JSC wrapper!\n");
   if (!dlopen("/usr/lib/libwrt-plugin-loading.so", RTLD_NOW))
@@ -39,69 +42,30 @@ CallHistoryContext::~CallHistoryContext() {
 }
 
 const char CallHistoryContext::name[] = "tizen.callhistory";
-std::string toString(const JSStringRef& arg)
-{
-    Assert(arg);
-    std::string result;
-    size_t jsSize = JSStringGetMaximumUTF8CStringSize(arg);
-    if (jsSize > 0) {
-        ++jsSize;
-        DPL::ScopedArray<char> buffer(new char[jsSize]);
-        size_t written = JSStringGetUTF8CString(arg, buffer.Get(), jsSize);
-        if (written > jsSize) {
-            LogError("Conversion could not be fully performed.");
-            return std::string();
-        }
-        result = buffer.Get();
-    }
-
-    return result;
-}
-
-/**
- * Converts JSValueRef to std::string
- * */
-std::string toString(JSContextRef ctx, JSValueRef value) {
-  Assert(ctx && value);
-  std::string result;
-  JSStringRef str = JSValueToStringCopy(ctx, value, NULL);
-  result = toString(str);
-  JSStringRelease(str);
-  return result;
-}
-
 
 // This will be generated from call_history_api.js.
 extern const char kSource_call_history_api[];
 
-const char* CallHistoryContext::GetJavaScript() {
-  printf("loading callhistory lib\n");
-  PluginPtr plugin = Plugin::LoadFromFile("/usr/lib/wrt-plugins/tizen-callhistory/libwrt-plugins-tizen-callhistory.so");
-  plugin->OnWidgetStart(0);
-  WrtDeviceApis::Commons::AceFunction func;
-  if (!(WrtDeviceApis::Commons::WrtAccessSingleton::Instance().checkAccessControl(func))) {
-    printf("Function is not allowed to run\n");
-  }       
-  printf("loaded callhistory lib\n");
-  Plugin::ClassPtrList list = plugin->GetClassList();
-  printf("got callhistory lib\n");
-  JSGlobalContextRef gContext = JSGlobalContextCreateInGroup(NULL, NULL);
-  for (std::list<Plugin::ClassPtr>::iterator it = list->begin(); it != list->end(); it ++) {
-    printf("calling class template of %s\n", (*it)->getName().c_str());
-    //JSClassRef classRef = static_cast<JSClassRef>(const_cast<JSObjectDeclaration::ClassTemplate>((*it)->getClassTemplate()));
-    JSObjectPtr objectInstance = JavaScriptInterfaceSingleton::Instance().
-              createObject(gContext, *it);
-    JavaScriptInterface::PropertiesList list  = JavaScriptInterfaceSingleton::Instance().getObjectPropertiesList(gContext, objectInstance);
-    FOREACH(it, list) printf("property: %s\n", it->c_str());
-    JSObjectPtr functionObject = JavaScriptInterfaceSingleton::Instance().getJSObjectProperty(gContext, objectInstance, "addChangeListener");
-
-    JSValueRef  arguments[1];
-    JSValueRef result;
-    result = JSObjectCallAsFunction(gContext, static_cast<JSObjectRef>(functionObject->getObject()), static_cast<JSObjectRef>(objectInstance->getObject()), 0, arguments, NULL);
-    toString(gContext, result);
-    //printf("got class name from class template: %s\n", classRef->className().c_str());
+typedef int (*jsc_init_t)();
+void* load_jsc(void*) {
+  printf("loading lib###################\n");
+  load_lib();
+  jsc_init_t init = (jsc_init_t) dlsym(jsc_handle, "init_jsc");
+  const char *dlsym_error = dlerror();
+  if (dlsym_error) {
+      std::cerr << "Cannot load symbol 'init': " << dlsym_error <<
+          '\n';
+      dlclose(jsc_handle);
   }
-  return "exports.find =  function (successCallback, errorCallback, filter, sortMode, limit, offset) { }";
+  else
+    init();
+}
+const char* CallHistoryContext::GetJavaScript() {
+  //pthread_t jsc_thread;
+  //pthread_create(&jsc_thread, NULL,  load_jsc, NULL);
+  //pthread_detach(jsc_thread);
+  load_jsc(NULL);
+  return "exports.addChangeListener =  function (listeerCB) {extension.postMessage('tizen.callhistory', {id:1})  }";
 }
 
 void CallHistoryContext::HandleMessage(const char* message) {
