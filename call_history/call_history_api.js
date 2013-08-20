@@ -41,5 +41,5 @@ exports.removeChangeListener =  function (onListenerCB) {
     extension.postMessage(JSON.stringify({cmd: "removeChangeListener"}));
 }
 exports.remove =  function (entry) {
-    extension.postMessage(JSON.stringify({cmd: "remove", uid:entry.uid}));
+    extension.postMessage(JSON.stringify({cmd: "remove", entry: entry}));
 }

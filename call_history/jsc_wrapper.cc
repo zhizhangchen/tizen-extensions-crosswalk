@@ -14,7 +14,6 @@ static int init_jsc() __attribute__((constructor));
 #include <glib.h>
 #include "common/picojson.h"
 #include "common/extension_adapter.h"
-#include <wrt-plugins-tizen/common/JSUtil.h>
 static JSObjectPtr objectInstance;
 static JSGlobalContextRef gContext;
 static PluginPtr plugin;
@@ -89,6 +88,7 @@ static std::string toString(JSContextRef ctx, JSValueRef value) {
 
 JSValueRef addChangeListenerCallback (JSContextRef ctx, JSObjectRef function, JSObjectRef thisObject, size_t argumentCount, const JSValueRef arguments[], JSValueRef* exception){
   printf("#########################\nchange listener callback called!\n############################\n");
+  return NULL;
 }
 
 static JSValueRef added_cb(JSContextRef context,
@@ -101,6 +101,7 @@ static JSValueRef added_cb(JSContextRef context,
   printf("#########################\nCall history Added!\n############################\n");
   return NULL;
 }
+static JSObjectRef entryTempl;
 static JSValueRef find_cb(JSContextRef context,
                                       JSObjectRef function,
                                       JSObjectRef thisObject,
@@ -114,6 +115,10 @@ static JSValueRef find_cb(JSContextRef context,
   if (argumentCount > 0) {
     std::string _reply_id = toString(gContext, JSObjectGetProperty(gContext, function, JSStringCreateWithUTF8CString("_reply_id"), NULL));
     _api = JSObjectGetPrivate(JSValueToObject(gContext, JSObjectGetProperty(gContext, function, JSStringCreateWithUTF8CString("_api"), NULL), NULL));
+    JSObjectRef entryList = JSValueToObject(gContext, arguments[0], NULL);
+    if (JSGetArrayLength(gContext, entryList) > 0) {
+      entryTempl = JSValueToObject(gContext, JSGetArrayElement(gContext, entryList, 0), NULL);
+    }
     if (_api) {
       std::string msg = "{ \"data\": " + toString(JSValueCreateJSONString(gContext, arguments[0], 2, 0));
       if (_reply_id != "")
@@ -148,20 +153,29 @@ static void processMessage(void* api, void* message) {
     return;
   }
   std::string cmd = v.get("cmd").to_str();
+  JSValueRef exception = NULL;
+  JSObjectPtr functionObject;
+  JSValueRef arguments[1];
   if (cmd == "find") {
-    JSValueRef exception = NULL;
-    JSObjectPtr functionObject = JavaScriptInterfaceSingleton::Instance().getJSObjectProperty(gContext, objectInstance, "find");
+    functionObject = JavaScriptInterfaceSingleton::Instance().getJSObjectProperty(gContext, objectInstance, "find");
     JSObjectRef obj = JSObjectMakeFunctionWithCallback(gContext, NULL, find_cb);
     JSClassRef apiClass = JSClassCreate(&listener_def);
     JSObjectRef apiObj = JSObjectMake(gContext, apiClass, api);
     assert(JSObjectGetPrivate(apiObj));
     JSObjectSetProperty(gContext, obj, JSStringCreateWithUTF8CString("_api"), apiObj, kJSPropertyAttributeNone, &exception);
     JSObjectSetProperty(gContext, obj, JSStringCreateWithUTF8CString("_reply_id"), JSValueMakeString(gContext, JSStringCreateWithUTF8CString(v.get("_reply_id").to_str().c_str())), kJSPropertyAttributeNone, &exception);
-    JSValueRef arguments[] = {obj};
-    JSObjectCallAsFunction(gContext, static_cast<JSObjectRef>(functionObject->getObject()), static_cast<JSObjectRef>(objectInstance->getObject()), 1, arguments, &exception);
-    if (exception)
-      printf("Exception:%s\n", toString(gContext, exception).c_str());
+    arguments[0] = {obj};
   }
+  else if (cmd == "remove") {
+    functionObject = JavaScriptInterfaceSingleton::Instance().getJSObjectProperty(gContext, objectInstance, "remove");
+    LogDebug("contructing remove parameter, entry" << v.get("entry").serialize());
+    JSObjectSetProperty(gContext, entryTempl, JSStringCreateWithUTF8CString("uid"), JSValueMakeString(gContext, JSStringCreateWithUTF8CString(v.get("entry").get("uid").to_str().c_str())), kJSPropertyAttributeNone, NULL);
+    arguments[0] = {entryTempl};
+    LogDebug("constructed remove parameter");
+  }
+  JSObjectCallAsFunction(gContext, static_cast<JSObjectRef>(functionObject->getObject()), static_cast<JSObjectRef>(objectInstance->getObject()), 1, arguments, &exception);
+  if (exception)
+    printf("Exception:%s\n", toString(gContext, exception).c_str());
 }
 
 static void processSyncMessage(void* api, void* message) {
@@ -211,6 +225,6 @@ EXTERN_C PUBLIC_EXPORT void handle_msg(ContextAPI* api, const char* msg) {
 }
   
 EXTERN_C PUBLIC_EXPORT void handle_sync_msg(ContextAPI* api, const char* msg){
-   appThread->PushEvent(api, &processSyncMessage, &deleteMessage, NULL);
-   DPL::WaitForSingleHandle(wait->GetHandle());
+  appThread->PushEvent(api, &processSyncMessage, &deleteMessage, NULL);
+  DPL::WaitForSingleHandle(wait->GetHandle());
 }
