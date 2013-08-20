@@ -37,7 +37,7 @@
         tizen.callhistory.find(function (entries) {
             console.log("call history:" + JSON.stringify(entries));
             console.log("removing...");
-            tizen.callhistory.remove(entries);
+            tizen.callhistory.remove(entries[0]);
 
         });
        

@@ -17,7 +17,7 @@ var postMessage = (function() {
       if (msg.error)
         callback.error(msg);
       else
-        callback.success(msg);
+        callback.success(msg.data);
     } else {
       console.log('Invalid reply_id received from node extension: ' + reply_id);
     }

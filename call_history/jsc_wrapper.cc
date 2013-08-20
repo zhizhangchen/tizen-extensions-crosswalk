@@ -1,4 +1,5 @@
 extern "C" __attribute__((visibility("default"))) int init_jsc();
+extern "C" __attribute__((visibility("default"))) const char* add_change_listener(void*);
 #include <JavaScriptCore/JSObjectRef.h>
 #include <stdio.h>
 #include "plugin.h"
@@ -8,9 +9,42 @@ extern "C" __attribute__((visibility("default"))) int init_jsc();
 #include "dpl/foreach.h"
 #include <dpl/scoped_array.h>
 #include <dpl/thread.h>
+#include <Commons/ThreadPool.h>
 #include <Ecore.h>
 #include <iostream>
 #include <glib.h>
+#include "jsc_wrapper.h"
+#include "common/picojson.h"
+#include <wrt-plugins-tizen/common/JSUtil.h>
+static JSObjectPtr objectInstance;
+static JSGlobalContextRef gContext;
+std::string toString(const JSStringRef& arg)
+{
+    Assert(arg);
+    std::string result;
+    size_t jsSize = JSStringGetMaximumUTF8CStringSize(arg);
+    if (jsSize > 0) {
+        ++jsSize;
+        DPL::ScopedArray<char> buffer(new char[jsSize]);
+        size_t written = JSStringGetUTF8CString(arg, buffer.Get(), jsSize);
+        if (written > jsSize) {
+            LogError("Conversion could not be fully performed.");
+            return std::string();
+        }
+        result = buffer.Get();
+    }
+
+    return result;
+}
+
+std::string toString(JSContextRef ctx, JSValueRef value) {
+  Assert(ctx && value);
+  std::string result;
+  JSStringRef str = JSValueToStringCopy(ctx, value, NULL);
+  result = toString(str);
+  JSStringRelease(str);
+  return result;
+}
 JSValueRef addChangeListenerCallback (JSContextRef ctx, JSObjectRef function, JSObjectRef thisObject, size_t argumentCount, const JSValueRef arguments[], JSValueRef* exception){
   printf("#########################\nchange listener callback called!\n############################\n");
 }
@@ -22,6 +56,32 @@ static JSValueRef added_cb(JSContextRef context,
                                       JSValueRef *exception)
 {
   printf("#########################\nCall history Added!\n############################\n");
+  return NULL;
+}
+static JSValueRef find_cb(JSContextRef context,
+                                      JSObjectRef function,
+                                      JSObjectRef thisObject,
+                                      size_t argumentCount,
+                                      const JSValueRef arguments[],
+                                      JSValueRef *exception)
+{
+  printf("#########################\nCall history Found!\n############################\n");
+  printf("argumentCount: %d\n", argumentCount);
+  void* _api;
+  if (argumentCount > 0) {
+    std::string _reply_id = toString(gContext, JSObjectGetProperty(gContext, function, JSStringCreateWithUTF8CString("_reply_id"), NULL));
+    _api = JSObjectGetPrivate(JSValueToObject(gContext, JSObjectGetProperty(gContext, function, JSStringCreateWithUTF8CString("_api"), NULL), NULL));
+    if (_api) {
+      std::string msg = "{ \"data\": " + toString(JSValueCreateJSONString(gContext, arguments[0], 2, 0));
+      if (_reply_id != "")
+        msg += (", \"_reply_id\": " + _reply_id);
+      msg += "}";
+      printf("%s\n", msg.c_str());
+      ((ContextAPI*)_api)->PostMessage(msg.c_str());
+    }
+    else 
+      printf("_api is null!\n");
+  }
   return NULL;
 }
 
@@ -52,33 +112,6 @@ static const JSClassDefinition listener_def =
     NULL, // hasInstance
     NULL // convertToType
 };
-std::string toString(const JSStringRef& arg)
-{
-    Assert(arg);
-    std::string result;
-    size_t jsSize = JSStringGetMaximumUTF8CStringSize(arg);
-    if (jsSize > 0) {
-        ++jsSize;
-        DPL::ScopedArray<char> buffer(new char[jsSize]);
-        size_t written = JSStringGetUTF8CString(arg, buffer.Get(), jsSize);
-        if (written > jsSize) {
-            LogError("Conversion could not be fully performed.");
-            return std::string();
-        }
-        result = buffer.Get();
-    }
-
-    return result;
-}
-
-std::string toString(JSContextRef ctx, JSValueRef value) {
-  Assert(ctx && value);
-  std::string result;
-  JSStringRef str = JSValueToStringCopy(ctx, value, NULL);
-  result = toString(str);
-  JSStringRelease(str);
-  return result;
-}
 #include <Ecore.h>
 #include <sys/select.h>
 #include <fcntl.h>
@@ -169,7 +202,6 @@ int EcoreSelectInterceptor(int nfds,
 }
 gboolean iterate_ecore_main_loop (gpointer user_data) {
     ecore_main_loop_iterate ();
-    usleep(1000000);
     return TRUE;
 }
 void* start_ecore_main_loop(void*){
@@ -199,7 +231,8 @@ void* start_ecore_main_loop(void*){
     ecore_main_loop_iterate ();
     //usleep(1000000);
   }*/
-  g_idle_add(iterate_ecore_main_loop, NULL);
+  //g_idle_add(iterate_ecore_main_loop, NULL);
+  g_timeout_add(100, iterate_ecore_main_loop, NULL);
   printf("ecore main returned\n");
 }
 class EcoreMainThread: public DPL::Thread {
@@ -212,48 +245,93 @@ PluginPtr plugin;
 class APIThread: public DPL::Thread {
 protected:
   int ThreadEntry() {
-    printf("loading callhistory lib\n");
-    plugin =  Plugin::LoadFromFile("/usr/lib/wrt-plugins/tizen-callhistory/libwrt-plugins-tizen-callhistory.so");
-    plugin->OnWidgetStart(0);
-    printf("loaded callhistory lib\n");
-    Plugin::ClassPtrList list = plugin->GetClassList();
-    printf("got callhistory lib\n");
-    JSGlobalContextRef gContext = JSGlobalContextCreateInGroup(NULL, NULL);
-    for (std::list<Plugin::ClassPtr>::iterator it = list->begin(); it != list->end(); it ++) {
-      printf("calling class template of %s\n", (*it)->getName().c_str());
-      //JSClassRef classRef = static_cast<JSClassRef>(const_cast<JSObjectDeclaration::ClassTemplate>((*it)->getClassTemplate()));
-      JSObjectPtr objectInstance = JavaScriptInterfaceSingleton::Instance().
-                createObject(gContext, *it);
-      JavaScriptInterface::PropertiesList list  = JavaScriptInterfaceSingleton::Instance().getObjectPropertiesList(gContext, objectInstance);
-      FOREACH(it, list) printf("property: %s\n", it->c_str());
-      JSObjectPtr functionObject = JavaScriptInterfaceSingleton::Instance().getJSObjectProperty(gContext, objectInstance, "addChangeListener");
-
-      JSValueRef result;
-      JSValueRef exception = NULL;
-      JSClassRef listenerDef = JSClassCreate(&listener_def);
-      JSObjectRef listenerObj = JSObjectMake(gContext, listenerDef, gContext);
-      JSValueRef arguments[] = {listenerObj};
-      result = JSObjectCallAsFunction(gContext, static_cast<JSObjectRef>(functionObject->getObject()), static_cast<JSObjectRef>(objectInstance->getObject()), 1, arguments, &exception);
-      if (exception)
-        printf("Exception:%s\n", toString(gContext, exception).c_str());
-      if (!result)
-        printf("failure to call addChangeListener\n");
-      else 
-        printf("Call addChangeListener succeed:%s\n", toString(gContext, result).c_str());
-      //printf("got class name from class template: %s\n", classRef->className().c_str());
-    }
   }
 };
+DPL::WaitableEvent* wait = new DPL::WaitableEvent;
+std::string id;
+static void deleteMessage(void* api, void* message) {
+  printf("Deleting message...\n");
+}
 
-
-
-  int init_jsc() {
-    (new APIThread())->Run();
-    //(new EcoreMainThread())->Run();
-    start_ecore_main_loop(NULL);
-    //pthread_t ecore_main_thread;
-    //pthread_create(&ecore_main_thread, NULL,  start_ecore_main_loop, NULL);
-    //pthread_detach(ecore_main_thread);
-    //ecore_thread_run(start_ecore_main_loop, NULL, NULL, NULL);
-    return 0;
+static void processMessage(void* api, void* message) {
+  picojson::value& v = *new picojson::value();
+  std::string err;
+  const char* msg = (const char*) message;
+  printf("handling message: %s\n", msg);
+  picojson::parse(v, msg, msg + strlen(msg), &err);
+  if (!err.empty()) {
+    std::cout << "Ignoring message.\n";
+    return;
   }
+  std::string cmd = v.get("cmd").to_str();
+  if (cmd == "find") {
+    JSValueRef exception = NULL;
+    JSObjectPtr functionObject = JavaScriptInterfaceSingleton::Instance().getJSObjectProperty(gContext, objectInstance, "find");
+    JSObjectRef obj = JSObjectMakeFunctionWithCallback(gContext, NULL, find_cb);
+    JSClassRef apiClass = JSClassCreate(&listener_def);
+    JSObjectRef apiObj = JSObjectMake(gContext, apiClass, api);
+    assert(JSObjectGetPrivate(apiObj));
+    JSObjectSetProperty(gContext, obj, JSStringCreateWithUTF8CString("_api"), apiObj, kJSPropertyAttributeNone, &exception);
+    JSObjectSetProperty(gContext, obj, JSStringCreateWithUTF8CString("_reply_id"), JSValueMakeString(gContext, JSStringCreateWithUTF8CString(v.get("_reply_id").to_str().c_str())), kJSPropertyAttributeNone, &exception);
+    JSValueRef arguments[] = {obj};
+    JSObjectCallAsFunction(gContext, static_cast<JSObjectRef>(functionObject->getObject()), static_cast<JSObjectRef>(objectInstance->getObject()), 1, arguments, &exception);
+    if (exception)
+      printf("Exception:%s\n", toString(gContext, exception).c_str());
+  }
+}
+
+static void processSyncMessage(void* api, void* message) {
+    JSObjectPtr functionObject = JavaScriptInterfaceSingleton::Instance().getJSObjectProperty(gContext, objectInstance, "addChangeListener");
+    JSValueRef result;
+    JSValueRef exception = NULL;
+    JSClassRef listenerDef = JSClassCreate(&listener_def);
+    JSObjectRef listenerObj = JSObjectMake(gContext, listenerDef, gContext);
+    assert(JSObjectGetPrivate(listenerObj));
+    JSValueRef arguments[] = {listenerObj};
+    result = JSObjectCallAsFunction(gContext, static_cast<JSObjectRef>(functionObject->getObject()), static_cast<JSObjectRef>(objectInstance->getObject()), 1, arguments, &exception);
+    if (exception)
+      printf("Exception:%s\n", toString(gContext, exception).c_str());
+    if (!result)
+      printf("failure to call addChangeListener\n");
+    else  {
+      printf("Call addChangeListener succeed:%s\n", toString(gContext, result).c_str());
+      id = toString(gContext, result);
+    }
+    wait->Signal();
+}
+
+DPL::Thread* appThread = WrtDeviceApis::Commons::ThreadPool::getInstance().getThreadRef(WrtDeviceApis::Commons::ThreadEnum::APPLICATION_THREAD);
+
+int init_jsc() {
+  //(new EcoreMainThread())->Run();
+  appThread->Run();
+  start_ecore_main_loop(NULL);
+  //pthread_t ecore_main_thread;
+  //pthread_create(&ecore_main_thread, NULL,  start_ecore_main_loop, NULL);
+  //pthread_detach(ecore_main_thread);
+  //ecore_thread_run(start_ecore_main_loop, NULL, NULL, NULL);
+  printf("loading callhistory lib\n");
+  plugin =  Plugin::LoadFromFile("/usr/lib/wrt-plugins/tizen-callhistory/libwrt-plugins-tizen-callhistory.so");
+  plugin->OnWidgetStart(0);
+  printf("loaded callhistory lib\n");
+  Plugin::ClassPtrList list = plugin->GetClassList();
+  printf("got callhistory lib\n");
+  gContext = JSGlobalContextCreateInGroup(NULL, NULL);
+  for (std::list<Plugin::ClassPtr>::iterator it = list->begin(); it != list->end(); it ++) {
+    printf("calling class template of %s\n", (*it)->getName().c_str());
+    //JSClassRef classRef = static_cast<JSClassRef>(const_cast<JSObjectDeclaration::ClassTemplate>((*it)->getClassTemplate()));
+    objectInstance = JavaScriptInterfaceSingleton::Instance().
+              createObject(gContext, *it);
+  }
+  return 0;
+}
+
+void handleMessage(ContextAPI* api, const char* msg) {
+  appThread->PushEvent(api, &processMessage, &deleteMessage, (void*)strdup(msg));
+}
+void handleSyncMessage(ContextAPI* api, const char* msg){
+   printf("pushing event...\n");
+   appThread->PushEvent(api, &processSyncMessage, &deleteMessage, NULL);
+   DPL::WaitForSingleHandle(wait->GetHandle());
+   api->SetSyncReply(id.c_str());
+}
