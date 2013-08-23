@@ -33,11 +33,16 @@ var postMessage = (function() {
     next_reply_id += 1;
     callbacks[reply_id] = {error: errorCallback, success: sucessCallback};
     msg._reply_id = reply_id.toString();
-    extension.postMessage(JSON.stringify(msg));
+    extension.postMessage(JSON.stringify(msg, function (key, value) {
+      if (typeof value === "function")
+        return "__function__:" + value.name;
+      return value;
+    }));
   }
 })();
 exports.find =  function (successCallback, errorCallback, filter, sortMode, limit, offset) {
-    postMessage({cmd: "find", filter: filter, sortMode: sortMode, limit: limit, offset: offset}, successCallback, errorCallback);
+    //postMessage({cmd: "find", filter: filter, sortMode: sortMode, limit: limit, offset: offset}, successCallback, errorCallback);
+    postMessage({cmd: "find", arguments: Array.prototype.slice.call(arguments)}, successCallback, errorCallback);
 }
 /*exports.find =  function () {
     postMessage({cmd: "find", args: JSON.stringify(arguments)});
@@ -57,5 +62,6 @@ exports.removeChangeListener =  function (onListenerCB) {
     extension.postMessage(JSON.stringify({cmd: "removeChangeListener"}));
 }
 exports.remove =  function (entry) {
-    extension.postMessage(JSON.stringify({cmd: "remove", entry: entry}));
+    console.log(JSON.stringify({cmd: "remove", arguments: Array.prototype.slice.call(arguments, 0)}));
+    extension.postMessage(JSON.stringify({cmd: "remove", arguments: Array.prototype.slice.call(arguments)}));
 }
