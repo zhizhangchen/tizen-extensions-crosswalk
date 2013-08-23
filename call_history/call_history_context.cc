@@ -32,7 +32,7 @@ FuncType loadFunc(const char* funcName) {
   FuncType func = (FuncType) dlsym(jsc_handle, funcName);
   const char *dlsym_error = dlerror();
   if (dlsym_error) {
-      std::cerr << "Cannot load symbol 'init': " << dlsym_error <<
+      std::cerr << "Cannot load symbol: " << dlsym_error <<
           '\n';
       dlclose(jsc_handle);
   }

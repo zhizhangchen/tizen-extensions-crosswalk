@@ -12,6 +12,7 @@ if [ $? = 1 ]; then
   sdb -d push test.html /tmp
   #sdb -d push $DEST_DIR/out/Default/test-ecore-thread /usr/bin
   #sdb -d shell TIZEN_PLATFORMLOGGING_MODE=1 TIZEN_DLOG_LEVEL=1 test-ecore-thread
-  sdb -d shell pkill -9 xwalk
-  sdb -d shell TIZEN_PLATFORMLOGGING_MODE=1 TIZEN_DLOG_LEVEL=1 xwalk --remote-debugging-port=9222  --external-extensions-path=/usr/lib/tizen-extensions-crosswalk /tmp/test.html
+  sdb -d shell pkill -9 xwalk && rm /opt/var/lib/corewatcher/processed/*
+  sdb -d shell TIZEN_PLATFORMLOGGING_MODE=1 TIZEN_DLOG_LEVEL=1 xwalk --remote-debugging-port=9222  --external-extensions-path=/usr/lib/tizen-extensions-crosswalk /tmp/test.html 
+  #sdb -d dlog
 fi

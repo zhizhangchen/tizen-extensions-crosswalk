@@ -11,7 +11,13 @@ var postMessage = (function() {
     var msg = JSON.parse(json);
     var reply_id = msg._reply_id;
     var callback = callbacks[reply_id];
-    if (callback) {
+    if (reply_id === undefined) {
+      //It's an event. Call listeners
+      listeners.forEach(function (listener) {
+        listener[msg.eventType](msg.data);
+      });
+    }
+    else if (callback) {
       delete msg._reply_id;
       delete callbacks[reply_id];
       if (msg.error)
@@ -33,9 +39,19 @@ var postMessage = (function() {
 exports.find =  function (successCallback, errorCallback, filter, sortMode, limit, offset) {
     postMessage({cmd: "find", filter: filter, sortMode: sortMode, limit: limit, offset: offset}, successCallback, errorCallback);
 }
+/*exports.find =  function () {
+    postMessage({cmd: "find", args: JSON.stringify(arguments)});
+    console.log(JSON.stringify(arguments));
+}*/
 var listeners = [];
 exports.addChangeListener =  function (onListenerCB) {
-    return Number(extension.internal.sendSyncMessage(JSON.stringify({cmd: "addChangeListener"})));
+    listeners.push(onListenerCB);
+    return Number(extension.internal.sendSyncMessage(JSON.stringify({cmd: "addChangeListener", arguments: Array.prototype.slice.call(arguments)}, function (key, value) {
+      if (typeof value === "function")
+        return "__function__:" + value.name;
+      return value;
+    })));
+    //return Number(extension.internal.sendSyncMessage(JSON.stringify({cmd: "addChangeListener"})));
 }
 exports.removeChangeListener =  function (onListenerCB) {
     extension.postMessage(JSON.stringify({cmd: "removeChangeListener"}));
