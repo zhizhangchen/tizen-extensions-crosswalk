@@ -62,6 +62,8 @@ exports.removeChangeListener =  function (onListenerCB) {
     extension.postMessage(JSON.stringify({cmd: "removeChangeListener"}));
 }
 exports.remove =  function (entry) {
-    console.log(JSON.stringify({cmd: "remove", arguments: Array.prototype.slice.call(arguments, 0)}));
     extension.postMessage(JSON.stringify({cmd: "remove", arguments: Array.prototype.slice.call(arguments)}));
+}
+exports.removeBatch =  function (entries, sucessCallback, errorCallback) {
+    postMessage({cmd: "removeBatch", arguments: Array.prototype.slice.call(arguments)}, sucessCallback, errorCallback);
 }

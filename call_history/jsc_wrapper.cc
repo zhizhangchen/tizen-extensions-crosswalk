@@ -19,27 +19,14 @@ static JSObjectPtr objectInstance;
 static JSGlobalContextRef gContext;
 static PluginPtr plugin;
 static DPL::WaitableEvent* wait = new DPL::WaitableEvent;
+static DPL::Thread* appThread = WrtDeviceApis::Commons::ThreadPool::getInstance().getThreadRef(WrtDeviceApis::Commons::ThreadEnum::APPLICATION_THREAD);
+static JSObjectRef entryTempl;
+
 typedef struct {
   ContextAPI* api;
   std::string _reply_id;
 } CallbackData;
 
-DPL::Thread* appThread = WrtDeviceApis::Commons::ThreadPool::getInstance().getThreadRef(WrtDeviceApis::Commons::ThreadEnum::APPLICATION_THREAD);
-static JSObjectRef entryTempl;
-
-static JSValueRef general_cb(JSContextRef context,
-                                      JSObjectRef function,
-                                      JSObjectRef thisObject,
-                                      size_t argumentCount,
-                                      const JSValueRef arguments[],
-                                      JSValueRef *exception);
-static const JSStaticFunction listener_staticfuncs[] =
-{
-    { "onadded", general_cb, kJSPropertyAttributeReadOnly },
-    { "onchanged", general_cb, kJSPropertyAttributeReadOnly },
-    { "onremoved", general_cb, kJSPropertyAttributeReadOnly },
-    { NULL, NULL, 0 }
-};
 static const JSClassDefinition api_def =
 {
     0, // version
@@ -48,26 +35,6 @@ static const JSClassDefinition api_def =
     NULL, // parentClass
     NULL, // staticValues
     NULL, // staticFunctions
-    NULL, // initialize
-    NULL, // finalize
-    NULL, // hasProperty
-    NULL, // getProperty
-    NULL, // setProperty
-    NULL, // deleteProperty
-    NULL, // getPropertyNames
-    NULL, // callAsFunction
-    NULL, // callAsConstructor
-    NULL, // hasInstance
-    NULL // convertToType
-};
-static const JSClassDefinition listener_def =
-{
-    0, // version
-    kJSClassAttributeNone, // attributes
-    "Listener", // className
-    NULL, // parentClass
-    NULL, // staticValues
-    listener_staticfuncs, // staticFunctions
     NULL, // initialize
     NULL, // finalize
     NULL, // hasProperty
@@ -148,17 +115,18 @@ JSValueRef general_cb (JSContextRef ctx, JSObjectRef function, JSObjectRef thisO
     CallbackData* cb_data = (CallbackData*)JSObjectGetPrivate(getPropertyAsObject(function, "_cb_data"));
     if (!cb_data->_reply_id.empty()){
       setStringProperty(resp, "_reply_id", cb_data->_reply_id.c_str());
+      if (JSIsArrayValue(ctx, arguments[0])) {
         JSObjectRef entryList = toJSObject(arguments[0]);
           if (JSGetArrayLength(gContext, entryList) > 0) {
             entryTempl = toJSObject(JSGetArrayElement(gContext, entryList, 0));
             printf("entryTempl address: %u\n", entryTempl);
             setProperty(entryTempl, "__obj_ref", JSValueMakeNumber(gContext, (uintptr_t)entryTempl));
           }
+      }
     } else {
       setStringProperty(resp, "eventType", getPropertyAsString(function, "name"));
     }
     cb_data->api->PostMessage(toJSON(resp).c_str());
-    //((ContextAPI*)JSObjectGetPrivate(getPropertyAsObject(function, "_cb_data")))->PostMessage(toJSON(resp).c_str());
   }
   return NULL;
 }
@@ -224,11 +192,9 @@ static JSValueRef picoToJS(picojson::value& value, const char* key,  JSValueRef 
 static JSValueRef* picoArrayToJSValueArray(const picojson::value& value, JSValueRef cb_data) {
   picojson::value::array picoArray = value.get<picojson::value::array>();
   JSValueRef* jsValueArray = new JSValueRef[picoArray.size()];
-  //JSValueRef arguments = JSValueMakeFromJSONString(gContext, JSStringCreateWithUTF8CString(v->get("arguments").to_str().c_str()));
-
   size_t i = 0;
   FOREACH(it, picoArray) {
-    jsValueArray[i] = picoToJS(*it, NULL, cb_data);
+    jsValueArray[i++] = picoToJS(*it, NULL, cb_data);
   }
   return jsValueArray;
 }
@@ -236,7 +202,6 @@ static void processMessage(void* api, void* message) {
   picojson::value* v = parseMesssage(message);
   if (!v) return;
     JSObjectPtr functionObject = JavaScriptInterfaceSingleton::Instance().getJSObjectProperty(gContext, objectInstance, v->get("cmd").to_str().c_str());
-    printf("got functionObject\n");
     JSValueRef result;
     JSValueRef exception = NULL;
     CallbackData* cb_data = new CallbackData;
@@ -248,12 +213,12 @@ static void processMessage(void* api, void* message) {
     if (args.size() == 1) {
       if (args[0].is<picojson::value::object>() && args[0].contains("__obj_ref")){
         arguments = new JSValueRef[1];
-        printf("contructing arg using obj_ref\n");
         arguments[0] = (JSValueRef)(uintptr_t)(args[0].get("__obj_ref").get<double>());
       }
     }
     if (!arguments)
       arguments = picoArrayToJSValueArray(v->get("arguments"), JSObjectMake(gContext, JSClassCreate(&api_def), cb_data));
+
     result = JSObjectCallAsFunction(
         gContext, 
         static_cast<JSObjectRef>(functionObject->getObject()),
@@ -267,52 +232,8 @@ static void processMessage(void* api, void* message) {
       printf("failure to call %s\n", v->get("cmd").to_str().c_str());
     else 
       ((ContextAPI*)api)->SetSyncReply(toString(gContext, result).c_str());
-  /*if (cmd == "find") {
-    JSObjectRef obj = JSObjectMakeFunctionWithCallback(gContext, NULL, general_cb);
-    JSClassRef apiClass = JSClassCreate(&api_def);
-    JSObjectRef apiObj = JSObjectMake(gContext, apiClass, api);
-    assert(JSObjectGetPrivate(apiObj));
-    setProperty(obj, "_api", apiObj);
-    assert(v->get("_reply_id").to_str().c_str());
-    setStringProperty(obj, "_reply_id", v->get("_reply_id").to_str()); 
-    arguments[0] = {obj};
-  }
-  else if (cmd == "remove") {
-    LogDebug("contructing remove parameter, entry" << v->get("entry").serialize());
-    if (entryTempl) {
-      setStringProperty(entryTempl, "uid", v->get("entry").get("uid").to_str());
-      arguments[0] = {entryTempl};
-      LogDebug("constructed remove parameter");
-    }
-  }
-  JSObjectCallAsFunction(gContext, static_cast<JSObjectRef>(functionObject->getObject()), static_cast<JSObjectRef>(objectInstance->getObject()), 1, arguments, &exception);
-  if (exception)
-    printf("Exception:%s\n", toString(gContext, exception).c_str());*/
 }
 static void processSyncMessage(void* api, void* message) {
-  /*picojson::value* v = parseMesssage(message);
-  if (!v) return;
-    JSObjectPtr functionObject = JavaScriptInterfaceSingleton::Instance().getJSObjectProperty(gContext, objectInstance, v->get("cmd").to_str().c_str());
-    JSValueRef result;
-    JSValueRef exception = NULL;
-    printf("calling function:%s\n", message);
-    CallbackData* cb_data = new CallbackData;
-    cb_data->api = (ContextAPI*)api;
-    result = JSObjectCallAsFunction(
-        gContext, 
-        static_cast<JSObjectRef>(functionObject->getObject()),
-        static_cast<JSObjectRef>(objectInstance->getObject()),
-        1,
-        picoArrayToJSValueArray(v->get("arguments"), JSObjectMake(gContext, JSClassCreate(&api_def), cb_data)),
-        &exception);
-    printf("called function:%s\n", message);
-    if (exception)
-      printf("Exception:%s\n", toString(gContext, exception).c_str());
-    if (!result)
-      printf("failure to call %s\n", v->get("cmd").to_str().c_str());
-    else  {
-      ((ContextAPI*)api)->SetSyncReply(toString(gContext, result).c_str());
-    }*/
   processMessage(api, message);
   wait->Signal();
 }
