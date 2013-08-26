@@ -48,7 +48,7 @@ static const JSClassDefinition api_def =
     NULL // convertToType
 };
 
-static JSValueRef* picoArrayToJSValueArray(const picojson::value& value, JSValueRef cb_data);
+static JSValueRef* picoArrayToJSValueArray(const picojson::value& value, ContextAPI* api);
 static std::string toString(const JSStringRef& arg) {
     Assert(arg);
     std::string result;
@@ -124,6 +124,7 @@ JSValueRef general_cb (JSContextRef ctx, JSObjectRef function, JSObjectRef thisO
           }
       }
     } else {
+      printf("setting event type\n");
       setStringProperty(resp, "eventType", getPropertyAsString(function, "name"));
     }
     cb_data->api->PostMessage(toJSON(resp).c_str());
@@ -153,24 +154,27 @@ static picojson::value* parseMesssage(void* message) {
   }
   return &v;
 }
-static JSValueRef picoToJS(picojson::value& value, const char* key,  JSValueRef cb_data) {
+static JSValueRef picoToJS(picojson::value& value, const char* key,  ContextAPI* api) {
     //arguments[i++] = JSValueMakeFromJSONString(gContext, it->to_str());
     if (value.is<picojson::value::object>()){
       JSObjectRef obj = JSObjectMake(gContext, NULL, NULL);
       FOREACH(it, value.get<picojson::value::object>()) {
-        setProperty(obj, it->first.c_str(), picoToJS(it->second, it->first.c_str(), cb_data));
+        setProperty(obj, it->first.c_str(), picoToJS(it->second, it->first.c_str(), api));
       }
       return obj;
     }
     else if (value.is<picojson::value::array>()){
       picojson::value::array picoArray = value.get<picojson::value::array>();
-      return JSObjectMakeArray(gContext, picoArray.size(), picoArrayToJSValueArray(value, cb_data), NULL);
+      return JSObjectMakeArray(gContext, picoArray.size(), picoArrayToJSValueArray(value, api), NULL);
     }
     else if (value.is<std::string>()){
       std::string prefix = "__function__";
       if (value.to_str().substr(0, prefix.size()) == prefix) {
          JSObjectRef func =  JSObjectMakeFunctionWithCallback(gContext, JSStringCreateWithUTF8CString(key), general_cb);
-         setProperty(func, "_cb_data", cb_data);
+         CallbackData * cb_data = new CallbackData;
+         cb_data->api = api;
+         cb_data->_reply_id = value.to_str().substr(prefix.size() + 1);
+         setProperty(func, "_cb_data", JSObjectMake(gContext, JSClassCreate(&api_def), cb_data));
          return func;
       }
       else
@@ -189,25 +193,22 @@ static JSValueRef picoToJS(picojson::value& value, const char* key,  JSValueRef 
       return stringToJSValue(value.get<char*>());
     }*/
 }
-static JSValueRef* picoArrayToJSValueArray(const picojson::value& value, JSValueRef cb_data) {
+static JSValueRef* picoArrayToJSValueArray(const picojson::value& value, ContextAPI* api) {
   picojson::value::array picoArray = value.get<picojson::value::array>();
   JSValueRef* jsValueArray = new JSValueRef[picoArray.size()];
   size_t i = 0;
   FOREACH(it, picoArray) {
-    jsValueArray[i++] = picoToJS(*it, NULL, cb_data);
+    jsValueArray[i++] = picoToJS(*it, NULL, api);
   }
   return jsValueArray;
 }
-static void processMessage(void* api, void* message) {
+static JSValueRef callJSFunc(void* api, void* message) {
+  printf("processMessage: %s\n", message);
   picojson::value* v = parseMesssage(message);
-  if (!v) return;
+  if (!v) return NULL;
     JSObjectPtr functionObject = JavaScriptInterfaceSingleton::Instance().getJSObjectProperty(gContext, objectInstance, v->get("cmd").to_str().c_str());
     JSValueRef result;
     JSValueRef exception = NULL;
-    CallbackData* cb_data = new CallbackData;
-    cb_data->api = (ContextAPI*)api;
-    if (v->contains("_reply_id"))
-      cb_data->_reply_id = v->get("_reply_id").to_str();
     JSValueRef* arguments = NULL;
     picojson::value::array args = v->get("arguments").get<picojson::value::array>();
     if (args.size() == 1) {
@@ -217,7 +218,7 @@ static void processMessage(void* api, void* message) {
       }
     }
     if (!arguments)
-      arguments = picoArrayToJSValueArray(v->get("arguments"), JSObjectMake(gContext, JSClassCreate(&api_def), cb_data));
+      arguments = picoArrayToJSValueArray(v->get("arguments"), (ContextAPI*)api);
 
     result = JSObjectCallAsFunction(
         gContext, 
@@ -228,13 +229,17 @@ static void processMessage(void* api, void* message) {
         &exception);
     if (exception)
       printf("Exception:%s\n", toString(gContext, exception).c_str());
-    if (!result)
-      printf("failure to call %s\n", v->get("cmd").to_str().c_str());
-    else 
-      ((ContextAPI*)api)->SetSyncReply(toString(gContext, result).c_str());
+    return result;
+}
+static void processMessage(void* api, void* message) {
+  callJSFunc(api, message);
 }
 static void processSyncMessage(void* api, void* message) {
-  processMessage(api, message);
+  JSValueRef result = callJSFunc(api, message);
+  if (!result)
+    printf("failure to process message: %s\n", message);
+  else 
+    ((ContextAPI*)api)->SetSyncReply(toString(gContext, result).c_str());
   wait->Signal();
 }
 
