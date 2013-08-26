@@ -37,12 +37,12 @@
         tizen.callhistory.find(function (entries) {
             console.log("call history:" + JSON.stringify(entries));
             console.log("removing...");
-            tizen.callhistory.remove(entries[0]);
-            /*tizen.callhistory.removeBatch(entries, function () {
+            //tizen.callhistory.remove(entries[0]);
+            tizen.callhistory.removeBatch(entries, function () {
               console.log("removeBatch succeeded!");
               }, function () {
               console.log("removeBatch failed!");
-            });*/
+            });
 
         });
        

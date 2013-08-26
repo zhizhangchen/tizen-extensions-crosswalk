@@ -107,28 +107,29 @@ static void setSubProperty(JSObjectRef obj, const char* propertyName, const char
   JSValueRef exception = NULL;
   setProperty(getPropertyAsObject(obj, propertyName), name, value);
 }
+void setObjRef(JSObjectRef obj) {
+  if (JSIsArrayValue(gContext, obj)) {
+    size_t len = JSGetArrayLength(gContext, obj);
+    for (size_t i = 0; i < len; i++) {
+      JSObjectRef elem = toJSObject(JSGetArrayElement(gContext, obj, i));
+      setProperty(elem, "__obj_ref", JSValueMakeNumber(gContext, (uintptr_t)elem));
+    }
+  }
+}
 JSValueRef general_cb (JSContextRef ctx, JSObjectRef function, JSObjectRef thisObject, size_t argumentCount, const JSValueRef arguments[], JSValueRef* exception){
   printf("#########################\ngeneral_cb called!\n############################\n");
-  if (argumentCount > 0) {
-    JSObjectRef resp = JSObjectMake(gContext, NULL, NULL);
-    setProperty(resp, "data", arguments[0]);
-    CallbackData* cb_data = (CallbackData*)JSObjectGetPrivate(getPropertyAsObject(function, "_cb_data"));
-    if (!cb_data->_reply_id.empty()){
-      setStringProperty(resp, "_reply_id", cb_data->_reply_id.c_str());
-      if (JSIsArrayValue(ctx, arguments[0])) {
-        JSObjectRef entryList = toJSObject(arguments[0]);
-          if (JSGetArrayLength(gContext, entryList) > 0) {
-            entryTempl = toJSObject(JSGetArrayElement(gContext, entryList, 0));
-            printf("entryTempl address: %u\n", entryTempl);
-            setProperty(entryTempl, "__obj_ref", JSValueMakeNumber(gContext, (uintptr_t)entryTempl));
-          }
-      }
-    } else {
-      printf("setting event type\n");
-      setStringProperty(resp, "eventType", getPropertyAsString(function, "name"));
-    }
-    cb_data->api->PostMessage(toJSON(resp).c_str());
+  CallbackData* cb_data = (CallbackData*)JSObjectGetPrivate(getPropertyAsObject(function, "_cb_data"));
+  JSObjectRef resp = JSObjectMake(gContext, NULL, NULL);
+  setProperty(resp, "arguments", JSObjectMakeArray(gContext, argumentCount, arguments, NULL));
+  if (!cb_data->_reply_id.empty()){
+    setStringProperty(resp, "_reply_id", cb_data->_reply_id.c_str());
+    for (size_t i = 0; i < argumentCount; i ++)
+      setObjRef(toJSObject(arguments[i]));
   }
+  else {
+    setStringProperty(resp, "eventType", getPropertyAsString(function, "name"));
+  }
+  cb_data->api->PostMessage(toJSON(resp).c_str());
   return NULL;
 }
 
@@ -157,6 +158,8 @@ static picojson::value* parseMesssage(void* message) {
 static JSValueRef picoToJS(picojson::value& value, const char* key,  ContextAPI* api) {
     //arguments[i++] = JSValueMakeFromJSONString(gContext, it->to_str());
     if (value.is<picojson::value::object>()){
+      if (value.contains("__obj_ref"))
+        return  (JSValueRef)(uintptr_t)(value.get("__obj_ref").get<double>());
       JSObjectRef obj = JSObjectMake(gContext, NULL, NULL);
       FOREACH(it, value.get<picojson::value::object>()) {
         setProperty(obj, it->first.c_str(), picoToJS(it->second, it->first.c_str(), api));
@@ -211,12 +214,12 @@ static JSValueRef callJSFunc(void* api, void* message) {
     JSValueRef exception = NULL;
     JSValueRef* arguments = NULL;
     picojson::value::array args = v->get("arguments").get<picojson::value::array>();
-    if (args.size() == 1) {
+    /*if (args.size() == 1) {
       if (args[0].is<picojson::value::object>() && args[0].contains("__obj_ref")){
         arguments = new JSValueRef[1];
         arguments[0] = (JSValueRef)(uintptr_t)(args[0].get("__obj_ref").get<double>());
       }
-    }
+    }*/
     if (!arguments)
       arguments = picoArrayToJSValueArray(v->get("arguments"), (ContextAPI*)api);
 
@@ -273,4 +276,13 @@ EXTERN_C PUBLIC_EXPORT void handle_msg(ContextAPI* api, const char* msg) {
 EXTERN_C PUBLIC_EXPORT void handle_sync_msg(ContextAPI* api, const char* msg){
   appThread->PushEvent(api, &processSyncMessage, &deleteMessage, (void*) strdup(msg));
   DPL::WaitForSingleHandle(wait->GetHandle());
+}
+
+EXTERN_C PUBLIC_EXPORT const char* __attribute__((visibility("default"))) get_object_properties(){
+  printf("geeting propertys");
+  picojson::value::array properties;
+  FOREACH(it, JavaScriptInterfaceSingleton::Instance().getObjectPropertiesList(gContext, objectInstance)) {
+    properties.push_back(picojson::value(*it));
+  }
+  return strdup(picojson::value(properties).serialize().c_str());
 }

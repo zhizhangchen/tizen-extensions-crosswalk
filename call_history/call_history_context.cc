@@ -48,10 +48,14 @@ void* load_lib(const char* path, int flag) {
   return handle;
 }
 
+typedef const char* (*get_object_properties_t)();
 const char* CallHistoryContext::GetJavaScript() {
   load_lib("/usr/lib/libaccess-control-bypass.so", RTLD_NOW|RTLD_GLOBAL);
   jsc_handle = load_lib("/usr/lib/libjsc-wrapper.so", RTLD_NOW);
-  return kSource_call_history_api;
+  get_object_properties_t get_object_properties = loadFunc<get_object_properties_t>("get_object_properties");
+  std::string jsSource = "var apis = ";
+  jsSource =  jsSource + std::string(get_object_properties()) + ";" + kSource_call_history_api;
+  return strdup(jsSource.c_str());
 }
 
 typedef void* (*handle_msg_t)(ContextAPI* api, const char* msg);
