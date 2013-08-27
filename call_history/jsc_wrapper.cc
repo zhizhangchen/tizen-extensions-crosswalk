@@ -50,7 +50,7 @@ static const JSClassDefinition api_def =
 
 static JSValueRef* picoArrayToJSValueArray(const picojson::value& value, ContextAPI* api);
 static std::string toString(const JSStringRef& arg) {
-    Assert(arg);
+    //Assert(arg);
     std::string result;
     size_t jsSize = JSStringGetMaximumUTF8CStringSize(arg);
     if (jsSize > 0) {
@@ -156,7 +156,6 @@ static picojson::value* parseMesssage(void* message) {
   return &v;
 }
 static JSValueRef picoToJS(picojson::value& value, const char* key,  ContextAPI* api) {
-    //arguments[i++] = JSValueMakeFromJSONString(gContext, it->to_str());
     if (value.is<picojson::value::object>()){
       if (value.contains("__obj_ref"))
         return  (JSValueRef)(uintptr_t)(value.get("__obj_ref").get<double>());
@@ -206,7 +205,7 @@ static JSValueRef* picoArrayToJSValueArray(const picojson::value& value, Context
   return jsValueArray;
 }
 static JSValueRef callJSFunc(void* api, void* message) {
-  printf("processMessage: %s\n", message);
+  printf("callJSFunc: %s\n", message);
   picojson::value* v = parseMesssage(message);
   if (!v) return NULL;
     JSObjectPtr functionObject = JavaScriptInterfaceSingleton::Instance().getJSObjectProperty(gContext, objectInstance, v->get("cmd").to_str().c_str());
@@ -214,12 +213,6 @@ static JSValueRef callJSFunc(void* api, void* message) {
     JSValueRef exception = NULL;
     JSValueRef* arguments = NULL;
     picojson::value::array args = v->get("arguments").get<picojson::value::array>();
-    /*if (args.size() == 1) {
-      if (args[0].is<picojson::value::object>() && args[0].contains("__obj_ref")){
-        arguments = new JSValueRef[1];
-        arguments[0] = (JSValueRef)(uintptr_t)(args[0].get("__obj_ref").get<double>());
-      }
-    }*/
     if (!arguments)
       arguments = picoArrayToJSValueArray(v->get("arguments"), (ContextAPI*)api);
 
@@ -241,8 +234,12 @@ static void processSyncMessage(void* api, void* message) {
   JSValueRef result = callJSFunc(api, message);
   if (!result)
     printf("failure to process message: %s\n", message);
-  else 
-    ((ContextAPI*)api)->SetSyncReply(toString(gContext, result).c_str());
+  else  {
+    printf("sending reponse for: %s\n", message);
+    printf("result: %s\n", toString(result).c_str());
+    printf("result JSON: %s\n", toJSON(result).c_str());
+    ((ContextAPI*)api)->SetSyncReply(toJSON(result).c_str());
+  }
   wait->Signal();
 }
 

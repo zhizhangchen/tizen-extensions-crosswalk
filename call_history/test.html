@@ -28,20 +28,25 @@
             // Registers a call history callback
             var handle = tizen.callhistory.addChangeListener(onListenerCB);
             console.log("Handle: " + handle);
-
             // Unregisters a previously registered listener
             //tizen.callhistory.removeChangeListener(handle);
         } catch (error) {
             console.log("Exception - code: " + error.name + " message: " + error.message);
         }
+
         tizen.callhistory.find(function (entries) {
             console.log("call history:" + JSON.stringify(entries));
             console.log("removing...");
             //tizen.callhistory.remove(entries[0]);
+            tizen.callhistory.removeAll(function () {
+              console.log("removeAll succeeded!");
+              }, function (error) {
+              console.log("removeAll failed:" + error);
+            });
             tizen.callhistory.removeBatch(entries, function () {
               console.log("removeBatch succeeded!");
-              }, function () {
-              console.log("removeBatch failed!");
+              }, function (error) {
+              console.log("removeBatch failed:" + JSON.stringify(error));
             });
 
         });

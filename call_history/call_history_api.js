@@ -40,11 +40,12 @@ var postMessage = (function() {
       }
     });
 
-    return send_msg(JSON.stringify({cmd: api, arguments: Array.prototype.slice.call(args)}, function (key, value) {
+    var result = send_msg(JSON.stringify({cmd: api, arguments: Array.prototype.slice.call(args)}, function (key, value) {
       if (typeof value === "function")
         return "__function__:" + (value._reply_id ? value._reply_id : "");
       return value;
     }));
+    return  (result === undefined || result === "")? undefined: JSON.parse(result);
   }
 })();
 
