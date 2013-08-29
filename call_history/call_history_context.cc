@@ -53,8 +53,11 @@ const char* CallHistoryContext::GetJavaScript() {
   load_lib("/usr/lib/libaccess-control-bypass.so", RTLD_NOW|RTLD_GLOBAL);
   jsc_handle = load_lib("/usr/lib/libjsc-wrapper.so", RTLD_NOW);
   get_object_properties_t get_object_properties = loadFunc<get_object_properties_t>("get_object_properties");
+  printf("got properties\n");
   std::string jsSource = "var apis = ";
+  printf("composing JavaScript\n");
   jsSource =  jsSource + std::string(get_object_properties()) + ";" + kSource_call_history_api;
+  printf("got JavaScript\n");
   return strdup(jsSource.c_str());
 }
 

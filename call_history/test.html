@@ -3,6 +3,64 @@
 	hello
 	<script>
         document.write("From JavaScript");
+        function testFind() {
+          function onSuccess(results) {
+            console.log(results.length + " call history item(s) found!");
+            for (var i=0; i<results.length; i++) {
+              console.log(i + ". " + results[i].toString()); // process the CallHistoryEntry
+            }
+          }
+
+          // Defines error callback
+          function onError(error) {
+            console.log("Query failed" + error.name);
+          }
+
+          // Defines filter: list CS calls, most recent first
+          var filter = new tizen.AttributeFilter("type", "EXACTLY", "TEL");
+
+          // Defines sort mode: descending on call start time.
+          var sortMode = new tizen.SortMode("startTime", "DESC");
+
+          // Makes the query and wire up the callbacks
+          tizen.callhistory.find(onSuccess,
+          onError,
+          filter,
+          sortMode);
+
+          var numberFilter = new tizen.AttributeFilter(
+          "remoteParties.remoteParty",
+          "EXACTLY",
+          "123456789");
+
+          // Creates a composite filter for time constraints
+          var y2009Filter = new tizen.AttributeRangeFilter(
+          "startTime",
+          new Date(2009, 0, 1),
+          new Date(2010, 0, 1));
+
+          var y2011Filter = new tizen.AttributeRangeFilter(
+          "startTime",
+          new Date(2011, 0, 1),
+          new Date(2012, 0, 1));
+
+          var dateFilter = new tizen.CompositeFilter("UNION", [y2009Filter, y2011Filter]);
+
+          // Creates a filter to find all video calls (including cellular, skype, etc)
+          // The filter matches exactly any features from the "features" array
+          var tfilter = new tizen.AttributeFilter("features", "EXACTLY", "VIDEOCALL");
+
+          // Creates composite filter
+          var ifilter = new tizen.CompositeFilter("INTERSECTION",
+          [numberFilter, dateFilter, tfilter]);
+
+          // Makes the query and wire up the callbacks; reuse sortMode
+          tizen.callhistory.find(onSuccess,
+          onError,
+          ifilter,
+          sortMode);
+
+        }
         var onListenerCB = {
             onadded: function(newItems) {
                 console.log("New Item added");
@@ -29,10 +87,11 @@
             var handle = tizen.callhistory.addChangeListener(onListenerCB);
             console.log("Handle: " + handle);
             // Unregisters a previously registered listener
-            //tizen.callhistory.removeChangeListener(handle);
+            tizen.callhistory.removeChangeListener(handle);
         } catch (error) {
             console.log("Exception - code: " + error.name + " message: " + error.message);
         }
+        testFind()
 
         tizen.callhistory.find(function (entries) {
             console.log("call history:" + JSON.stringify(entries));

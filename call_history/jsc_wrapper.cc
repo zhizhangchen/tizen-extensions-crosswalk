@@ -15,12 +15,13 @@ static int init_jsc() __attribute__((constructor));
 #include "common/picojson.h"
 #include "common/extension_adapter.h"
 #include <stdint.h>
-static JSObjectPtr objectInstance;
 static JSGlobalContextRef gContext;
 static PluginPtr plugin;
-static DPL::WaitableEvent* wait = new DPL::WaitableEvent;
+static PluginPtr tizen_plugin;
+static DPL::WaitableEvent* wait =  new DPL::WaitableEvent;
 static DPL::Thread* appThread = WrtDeviceApis::Commons::ThreadPool::getInstance().getThreadRef(WrtDeviceApis::Commons::ThreadEnum::APPLICATION_THREAD);
 static JSObjectRef entryTempl;
+static std::map<std::string, JSObjectPtr> objectInstances;
 
 typedef struct {
   ContextAPI* api;
@@ -115,6 +116,9 @@ void setObjRef(JSObjectRef obj) {
       setProperty(elem, "__obj_ref", JSValueMakeNumber(gContext, (uintptr_t)elem));
     }
   }
+  else if (JSValueIsObject(gContext, obj)) {
+      setProperty(obj, "__obj_ref", JSValueMakeNumber(gContext, (uintptr_t)obj));
+  }
 }
 JSValueRef general_cb (JSContextRef ctx, JSObjectRef function, JSObjectRef thisObject, size_t argumentCount, const JSValueRef arguments[], JSValueRef* exception){
   printf("#########################\ngeneral_cb called!\n############################\n");
@@ -207,24 +211,37 @@ static JSValueRef* picoArrayToJSValueArray(const picojson::value& value, Context
 static JSValueRef callJSFunc(void* api, void* message) {
   printf("callJSFunc: %s\n", message);
   picojson::value* v = parseMesssage(message);
+  JSObjectPtr objectInstance = objectInstances[v->get("api").to_str()];
   if (!v) return NULL;
-    JSObjectPtr functionObject = JavaScriptInterfaceSingleton::Instance().getJSObjectProperty(gContext, objectInstance, v->get("cmd").to_str().c_str());
     JSValueRef result;
     JSValueRef exception = NULL;
     JSValueRef* arguments = NULL;
     picojson::value::array args = v->get("arguments").get<picojson::value::array>();
-    if (!arguments)
-      arguments = picoArrayToJSValueArray(v->get("arguments"), (ContextAPI*)api);
+    arguments = picoArrayToJSValueArray(v->get("arguments"), (ContextAPI*)api);
 
-    result = JSObjectCallAsFunction(
-        gContext, 
-        static_cast<JSObjectRef>(functionObject->getObject()),
-        static_cast<JSObjectRef>(objectInstance->getObject()),
-        args.size(),
-        arguments,
-        &exception);
+    std::string cmd = v->get("cmd").to_str();
+    if (cmd == "__constructor__") {
+      result = JSObjectCallAsConstructor(
+          gContext, 
+          static_cast<JSObjectRef>(objectInstance->getObject()),
+          args.size(),
+          arguments,
+          &exception);
+    }
+    else {
+      JSObjectPtr functionObject = JavaScriptInterfaceSingleton::Instance().getJSObjectProperty(gContext, objectInstance, cmd.c_str());
+      result = JSObjectCallAsFunction(
+          gContext, 
+          static_cast<JSObjectRef>(functionObject->getObject()),
+          static_cast<JSObjectRef>(objectInstance->getObject()),
+          args.size(),
+          arguments,
+          &exception);
+    }
     if (exception)
       printf("Exception:%s\n", toString(gContext, exception).c_str());
+    if (JSValueIsObject(gContext, result))
+      setObjRef(toJSObject(result));
     return result;
 }
 static void processMessage(void* api, void* message) {
@@ -234,15 +251,9 @@ static void processSyncMessage(void* api, void* message) {
   JSValueRef result = callJSFunc(api, message);
   if (!result)
     printf("failure to process message: %s\n", message);
-  else  {
-    printf("sending reponse for: %s\n", message);
-    printf("result: %s\n", toString(result).c_str());
-    printf("result JSON: %s\n", toJSON(result).c_str());
-    ((ContextAPI*)api)->SetSyncReply(toJSON(result).c_str());
-  }
+  ((ContextAPI*)api)->SetSyncReply(toJSON(result).c_str());
   wait->Signal();
 }
-
 int init_jsc() {
   appThread->Run();
   printf("starting ecore main loop...\n");
@@ -251,14 +262,25 @@ int init_jsc() {
   printf("ecore main returned\n");
   printf("loading callhistory lib\n");
   plugin =  Plugin::LoadFromFile("/usr/lib/wrt-plugins/tizen-callhistory/libwrt-plugins-tizen-callhistory.so");
+  tizen_plugin =  Plugin::LoadFromFile("/usr/lib/wrt-plugins/tizen-tizen/libwrt-plugins-tizen-tizen.so");
   plugin->OnWidgetStart(0);
+  tizen_plugin->OnWidgetStart(0);
   printf("loaded callhistory lib\n");
   Plugin::ClassPtrList list = plugin->GetClassList();
   printf("got callhistory lib\n");
   gContext = JSGlobalContextCreateInGroup(NULL, NULL);
   for (std::list<Plugin::ClassPtr>::iterator it = list->begin(); it != list->end(); it ++) {
     printf("calling class template of %s\n", (*it)->getName().c_str());
-    objectInstance = JavaScriptInterfaceSingleton::Instance().
+    objectInstances[(*it)->getName()] = JavaScriptInterfaceSingleton::Instance().
+              createObject(gContext, *it);
+  }
+  list = tizen_plugin->GetClassList();
+  printf("got tizen class list\n");
+  for (std::list<Plugin::ClassPtr>::iterator it = list->begin(); it != list->end(); it ++) {
+    printf("calling class template of %s\n", (*it)->getName().c_str());
+    if ((*it)->getName() == "tizen")
+      continue;
+    objectInstances[(*it)->getName()] = JavaScriptInterfaceSingleton::Instance().
               createObject(gContext, *it);
   }
   return 0;
@@ -273,13 +295,21 @@ EXTERN_C PUBLIC_EXPORT void handle_msg(ContextAPI* api, const char* msg) {
 EXTERN_C PUBLIC_EXPORT void handle_sync_msg(ContextAPI* api, const char* msg){
   appThread->PushEvent(api, &processSyncMessage, &deleteMessage, (void*) strdup(msg));
   DPL::WaitForSingleHandle(wait->GetHandle());
+  wait->Reset();
 }
 
-EXTERN_C PUBLIC_EXPORT const char* __attribute__((visibility("default"))) get_object_properties(){
-  printf("geeting propertys");
-  picojson::value::array properties;
-  FOREACH(it, JavaScriptInterfaceSingleton::Instance().getObjectPropertiesList(gContext, objectInstance)) {
-    properties.push_back(picojson::value(*it));
+EXTERN_C PUBLIC_EXPORT const char* get_object_properties(){
+  picojson::value::object object;
+  FOREACH(itr, objectInstances) {
+    if (JSObjectIsConstructor(gContext, static_cast<JSObjectRef>(itr->second->getObject()))) {
+      object[itr->first] = picojson::value("__constructor__");
+      continue;
+    }
+    picojson::value::array properties;
+    FOREACH(it, JavaScriptInterfaceSingleton::Instance().getObjectPropertiesList(gContext, itr->second)) {
+      properties.push_back(picojson::value(*it));
+    }
+    object[itr->first] = picojson::value(properties);
   }
-  return strdup(picojson::value(properties).serialize().c_str());
+  return strdup(picojson::value(object).serialize().c_str());
 }
