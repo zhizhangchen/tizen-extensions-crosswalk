@@ -51,6 +51,9 @@ static const JSClassDefinition api_def =
 };
 
 static JSValueRef* picoArrayToJSValueArray(const picojson::value& value, ContextAPI* api);
+static bool isJSObject(JSValueRef value) {
+  return JSValueIsObject(gContext, value);
+}
 static std::string toString(const JSStringRef& arg) {
     //Assert(arg);
     std::string result;
@@ -83,6 +86,15 @@ static std::string toString(JSValueRef value) {
 static JSValueRef stringToJSValue(const std::string& str) {
   return JSValueMakeString(gContext, JSStringCreateWithUTF8CString(str.c_str()));
 }
+static JSValueRef toJSNumber(double value) {
+  return JSValueMakeNumber(gContext, value);
+}
+static JSObjectRef makeJSArray(size_t count, const JSValueRef elements[]) {
+  return JSObjectMakeArray(gContext, count, elements, NULL);
+}
+static JSObjectRef makeJSObject( JSClassRef jsClass = NULL, void* data = NULL) {
+  return JSObjectMake(gContext, jsClass, data);
+}
 static std::string toJSON(JSValueRef value) {
   return toString(JSValueCreateJSONString(gContext, value, 2, 0));
 }
@@ -114,18 +126,18 @@ void setObjRef(JSObjectRef obj) {
     size_t len = JSGetArrayLength(gContext, obj);
     for (size_t i = 0; i < len; i++) {
       JSObjectRef elem = toJSObject(JSGetArrayElement(gContext, obj, i));
-      setProperty(elem, "__obj_ref", JSValueMakeNumber(gContext, (uintptr_t)elem));
+      setProperty(elem, "__obj_ref", toJSNumber((uintptr_t)elem));
     }
   }
-  else if (JSValueIsObject(gContext, obj)) {
-      setProperty(obj, "__obj_ref", JSValueMakeNumber(gContext, (uintptr_t)obj));
+  else if (isJSObject(obj)) {
+      setProperty(obj, "__obj_ref", toJSNumber((uintptr_t)obj));
   }
 }
 JSValueRef general_cb (JSContextRef ctx, JSObjectRef function, JSObjectRef thisObject, size_t argumentCount, const JSValueRef arguments[], JSValueRef* exception){
   printf("#########################\ngeneral_cb called!\n############################\n");
   CallbackData* cb_data = (CallbackData*)JSObjectGetPrivate(getPropertyAsObject(function, "_cb_data"));
-  JSObjectRef resp = JSObjectMake(gContext, NULL, NULL);
-  setProperty(resp, "arguments", JSObjectMakeArray(gContext, argumentCount, arguments, NULL));
+  JSObjectRef resp = makeJSObject();
+  setProperty(resp, "arguments", makeJSArray(argumentCount, arguments));
   if (!cb_data->_reply_id.empty()){
     setStringProperty(resp, "_reply_id", cb_data->_reply_id.c_str());
     for (size_t i = 0; i < argumentCount; i ++)
@@ -167,7 +179,7 @@ static JSValueRef picoToJS(picojson::value& value, const char* key,  ContextAPI*
     if (value.is<picojson::value::object>()){
       if (value.contains("__obj_ref"))
         return  (JSValueRef)(uintptr_t)(value.get("__obj_ref").get<double>());
-      JSObjectRef obj = JSObjectMake(gContext, NULL, NULL);
+      JSObjectRef obj = makeJSObject();
       FOREACH(it, value.get<picojson::value::object>()) {
         setProperty(obj, it->first.c_str(), picoToJS(it->second, it->first.c_str(), api));
       }
@@ -175,7 +187,7 @@ static JSValueRef picoToJS(picojson::value& value, const char* key,  ContextAPI*
     }
     else if (value.is<picojson::value::array>()){
       picojson::value::array picoArray = value.get<picojson::value::array>();
-      return JSObjectMakeArray(gContext, picoArray.size(), picoArrayToJSValueArray(value, api), NULL);
+      return makeJSArray(picoArray.size(), picoArrayToJSValueArray(value, api));
     }
     else if (value.is<std::string>()){
       if (startsWith(value.to_str(), "__function__")) {
@@ -184,28 +196,26 @@ static JSValueRef picoToJS(picojson::value& value, const char* key,  ContextAPI*
         CallbackData * cb_data = new CallbackData;
         cb_data->api = api;
         cb_data->_reply_id = value.to_str().substr(prefix.size() + 1);
-        setProperty(func, "_cb_data", JSObjectMake(gContext, JSClassCreate(&api_def), cb_data));
+        setProperty(func, "_cb_data", makeJSObject(JSClassCreate(&api_def), cb_data));
         return func;
       }
       else if (startsWith(value.to_str(), "__undefined__")) {
           return JSValueMakeUndefined(gContext);
       }
       else if (startsWith(value.to_str(), "__NaN__")) {
-          printf("############################# Making NaN!\n");
-          return JSValueMakeNumber(gContext, std::numeric_limits<double>::quiet_NaN());
+          return toJSNumber(std::numeric_limits<double>::quiet_NaN());
       }
       else
         return stringToJSValue(value.to_str());
     }
     else if (value.is<picojson::null>()){
-      printf("############################# Making null value!\n");
       return JSValueMakeNull(gContext);
     }
     else if (value.is<bool>()){
       return JSValueMakeBoolean(gContext, value.get<bool>());
     }
     else if (value.is<double>()){
-      return JSValueMakeNumber(gContext, value.get<double>());
+      return toJSNumber(value.get<double>());
     }
     /*else if (value.is<char*>()){
       return stringToJSValue(value.get<char*>());
@@ -249,7 +259,7 @@ static JSValueRef callJSFunc(void* api, void* message, JSValueRef* exception) {
           arguments,
           exception);
     }
-    if (JSValueIsObject(gContext, result))
+    if (isJSObject(result))
       setObjRef(toJSObject(result));
     return result;
 }
@@ -262,7 +272,7 @@ static void processSyncMessage(void* api, void* message) {
   JSValueRef result = callJSFunc(api, message, &exception);
   if (!result)
     printf("result is null to process message: %s\n", message);
-  JSObjectRef resp = JSObjectMake(gContext, NULL, NULL);
+  JSObjectRef resp = makeJSObject();
   if (exception) {
     printf("exception:%s\n", toString(exception).c_str());
     setProperty(resp, "exception", exception);
@@ -279,27 +289,20 @@ int init_jsc() {
   g_timeout_add(100, iterate_ecore_main_loop, NULL);
   printf("ecore main returned\n");
   printf("loading callhistory lib\n");
-  plugin =  Plugin::LoadFromFile("/usr/lib/wrt-plugins/tizen-callhistory/libwrt-plugins-tizen-callhistory.so");
-  tizen_plugin =  Plugin::LoadFromFile("/usr/lib/wrt-plugins/tizen-tizen/libwrt-plugins-tizen-tizen.so");
-  plugin->OnWidgetStart(0);
-  tizen_plugin->OnWidgetStart(0);
-  printf("loaded callhistory lib\n");
-  Plugin::ClassPtrList list = plugin->GetClassList();
-  printf("got callhistory lib\n");
+  const char* libraries[] = {"/usr/lib/wrt-plugins/tizen-callhistory/libwrt-plugins-tizen-callhistory.so","/usr/lib/wrt-plugins/tizen-tizen/libwrt-plugins-tizen-tizen.so"};
   gContext = JSGlobalContextCreateInGroup(NULL, NULL);
-  for (std::list<Plugin::ClassPtr>::iterator it = list->begin(); it != list->end(); it ++) {
-    printf("calling class template of %s\n", (*it)->getName().c_str());
-    objectInstances[(*it)->getName()] = JavaScriptInterfaceSingleton::Instance().
-              createObject(gContext, *it);
-  }
-  list = tizen_plugin->GetClassList();
-  printf("got tizen class list\n");
-  for (std::list<Plugin::ClassPtr>::iterator it = list->begin(); it != list->end(); it ++) {
-    printf("calling class template of %s\n", (*it)->getName().c_str());
-    if ((*it)->getName() == "tizen")
-      continue;
-    objectInstances[(*it)->getName()] = JavaScriptInterfaceSingleton::Instance().
-              createObject(gContext, *it);
+  for (int i = 0; i < sizeof(libraries)/sizeof(const char*); i ++) {
+    plugin =  Plugin::LoadFromFile(libraries[i]);
+    plugin->OnWidgetStart(0);
+    printf("loaded lib:%s\n", libraries[i]);
+    Plugin::ClassPtrList list = plugin->GetClassList();
+    for (std::list<Plugin::ClassPtr>::iterator it = list->begin(); it != list->end(); it ++) {
+      printf("calling class template of %s\n", (*it)->getName().c_str());
+      if ((*it)->getName() == "tizen")
+        continue;
+      objectInstances[(*it)->getName()] = JavaScriptInterfaceSingleton::Instance().
+                createObject(gContext, *it);
+    }
   }
   return 0;
 }
