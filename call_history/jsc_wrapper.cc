@@ -18,7 +18,8 @@ static int init_jsc() __attribute__((constructor));
 static JSGlobalContextRef gContext;
 static PluginPtr plugin;
 static PluginPtr tizen_plugin;
-static DPL::WaitableEvent* wait =  new DPL::WaitableEvent;
+//static DPL::WaitableEvent* wait =  new DPL::WaitableEvent;
+static DPL::WaitableEvent* wait;
 static DPL::Thread* appThread = WrtDeviceApis::Commons::ThreadPool::getInstance().getThreadRef(WrtDeviceApis::Commons::ThreadEnum::APPLICATION_THREAD);
 static JSObjectRef entryTempl;
 static std::map<std::string, JSObjectPtr> objectInstances;
@@ -159,6 +160,9 @@ static picojson::value* parseMesssage(void* message) {
   }
   return &v;
 }
+static bool startsWith(std::string str, std::string prefix) {
+  return str.substr(0, prefix.size()) == prefix;
+}
 static JSValueRef picoToJS(picojson::value& value, const char* key,  ContextAPI* api) {
     if (value.is<picojson::value::object>()){
       if (value.contains("__obj_ref"))
@@ -174,19 +178,27 @@ static JSValueRef picoToJS(picojson::value& value, const char* key,  ContextAPI*
       return JSObjectMakeArray(gContext, picoArray.size(), picoArrayToJSValueArray(value, api), NULL);
     }
     else if (value.is<std::string>()){
-      std::string prefix = "__function__";
-      if (value.to_str().substr(0, prefix.size()) == prefix) {
-         JSObjectRef func =  JSObjectMakeFunctionWithCallback(gContext, JSStringCreateWithUTF8CString(key), general_cb);
-         CallbackData * cb_data = new CallbackData;
-         cb_data->api = api;
-         cb_data->_reply_id = value.to_str().substr(prefix.size() + 1);
-         setProperty(func, "_cb_data", JSObjectMake(gContext, JSClassCreate(&api_def), cb_data));
-         return func;
+      if (startsWith(value.to_str(), "__function__")) {
+        std::string prefix = "__function__";
+        JSObjectRef func =  JSObjectMakeFunctionWithCallback(gContext, JSStringCreateWithUTF8CString(key), general_cb);
+        CallbackData * cb_data = new CallbackData;
+        cb_data->api = api;
+        cb_data->_reply_id = value.to_str().substr(prefix.size() + 1);
+        setProperty(func, "_cb_data", JSObjectMake(gContext, JSClassCreate(&api_def), cb_data));
+        return func;
+      }
+      else if (startsWith(value.to_str(), "__undefined__")) {
+          return JSValueMakeUndefined(gContext);
+      }
+      else if (startsWith(value.to_str(), "__NaN__")) {
+          printf("############################# Making NaN!\n");
+          return JSValueMakeNumber(gContext, std::numeric_limits<double>::quiet_NaN());
       }
       else
         return stringToJSValue(value.to_str());
     }
     else if (value.is<picojson::null>()){
+      printf("############################# Making null value!\n");
       return JSValueMakeNull(gContext);
     }
     else if (value.is<bool>()){
@@ -208,13 +220,12 @@ static JSValueRef* picoArrayToJSValueArray(const picojson::value& value, Context
   }
   return jsValueArray;
 }
-static JSValueRef callJSFunc(void* api, void* message) {
+static JSValueRef callJSFunc(void* api, void* message, JSValueRef* exception) {
   printf("callJSFunc: %s\n", message);
   picojson::value* v = parseMesssage(message);
   JSObjectPtr objectInstance = objectInstances[v->get("api").to_str()];
   if (!v) return NULL;
     JSValueRef result;
-    JSValueRef exception = NULL;
     JSValueRef* arguments = NULL;
     picojson::value::array args = v->get("arguments").get<picojson::value::array>();
     arguments = picoArrayToJSValueArray(v->get("arguments"), (ContextAPI*)api);
@@ -226,7 +237,7 @@ static JSValueRef callJSFunc(void* api, void* message) {
           static_cast<JSObjectRef>(objectInstance->getObject()),
           args.size(),
           arguments,
-          &exception);
+          exception);
     }
     else {
       JSObjectPtr functionObject = JavaScriptInterfaceSingleton::Instance().getJSObjectProperty(gContext, objectInstance, cmd.c_str());
@@ -236,22 +247,29 @@ static JSValueRef callJSFunc(void* api, void* message) {
           static_cast<JSObjectRef>(objectInstance->getObject()),
           args.size(),
           arguments,
-          &exception);
+          exception);
     }
-    if (exception)
-      printf("Exception:%s\n", toString(gContext, exception).c_str());
     if (JSValueIsObject(gContext, result))
       setObjRef(toJSObject(result));
     return result;
 }
 static void processMessage(void* api, void* message) {
-  callJSFunc(api, message);
+  JSValueRef exception;
+  callJSFunc(api, message, &exception);
 }
 static void processSyncMessage(void* api, void* message) {
-  JSValueRef result = callJSFunc(api, message);
+  JSValueRef exception;
+  JSValueRef result = callJSFunc(api, message, &exception);
   if (!result)
-    printf("failure to process message: %s\n", message);
-  ((ContextAPI*)api)->SetSyncReply(toJSON(result).c_str());
+    printf("result is null to process message: %s\n", message);
+  JSObjectRef resp = JSObjectMake(gContext, NULL, NULL);
+  if (exception) {
+    printf("exception:%s\n", toString(exception).c_str());
+    setProperty(resp, "exception", exception);
+  }
+  if (result)
+    setProperty(resp, "result", result);
+  ((ContextAPI*)api)->SetSyncReply(strdup(toJSON(resp).c_str()));
   wait->Signal();
 }
 int init_jsc() {
@@ -293,9 +311,11 @@ EXTERN_C PUBLIC_EXPORT void handle_msg(ContextAPI* api, const char* msg) {
 }
   
 EXTERN_C PUBLIC_EXPORT void handle_sync_msg(ContextAPI* api, const char* msg){
+  wait =  new DPL::WaitableEvent;
   appThread->PushEvent(api, &processSyncMessage, &deleteMessage, (void*) strdup(msg));
   DPL::WaitForSingleHandle(wait->GetHandle());
-  wait->Reset();
+  delete wait;
+  //wait->Reset();
 }
 
 EXTERN_C PUBLIC_EXPORT const char* get_object_properties(){
