@@ -3,17 +3,18 @@
 	hello
 	<script>
         document.write("From JavaScript");
-         var event_init = {
-                startDate: new tizen.TZDate(2011, 3, 30, 10, 0),
-                duration: new tizen.TimeDuration(1, "HOURS")
-            },
-            calendar = tizen.calendar.getDefaultCalendar("EVENT"),
-            ev = new tizen.CalendarEvent(event_init);
+        var event_init = {
+          startDate: new tizen.TZDate(2011, 3, 30, 10, 0),
+          duration: new tizen.TimeDuration(1, "HOURS")
+        },
+        calendar = tizen.calendar.getDefaultCalendar("EVENT"),
+        ev = new tizen.CalendarEvent(event_init);
 
-            calendar.add(ev);
-            console.assert(ev.id !== null, "id shouldn't be null");
-            console.assert("geolocation" in ev,"The geolocation attribute should exist");
-            cleanup(calendar);
+        console.log("#################################ev before call:" + JSON.stringify(ev));
+        calendar.add(ev);
+        console.log("ev after call:" + JSON.stringify(ev));
+        console.assert(ev.id !== null, "id shouldn't be null");
+        console.assert("geolocation" in ev,"The geolocation attribute should exist");
         function testFind() {
           function onSuccess(results) {
             console.log(results.length + " call history item(s) found!");

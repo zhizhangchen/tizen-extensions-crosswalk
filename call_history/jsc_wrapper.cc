@@ -28,6 +28,8 @@ typedef struct {
   std::string _reply_id;
 } CallbackData;
 
+typedef JSValueRef (*object_wrapper_t)(JSObjectRef, JSObjectRef);
+
 static const JSClassDefinition api_def =
 {
     0, // version
@@ -123,7 +125,6 @@ static void setSubProperty(JSObjectRef obj, const char* propertyName, const char
   JSValueRef exception = NULL;
   setProperty(getPropertyAsObject(obj, propertyName), name, value);
 }
-typedef JSValueRef (*object_wrapper_t)(JSObjectRef, JSObjectRef);
 JSValueRef wrapJSValue(JSValueRef value, object_wrapper_t wrapper) {
   if (JSIsArrayValue(gContext, value)) {
     JSObjectRef obj = toJSObject(value);
@@ -265,7 +266,7 @@ static JSValueRef* picoArrayToJSValueArray(const picojson::value& value, Context
   }
   return jsValueArray;
 }
-static JSValueRef callJSFunc(void* api, void* message, JSValueRef* exception) {
+static JSValueRef callJSFunc(void* api, void* message) {
   printf("callJSFunc: %s\n", message);
   picojson::value* v = parseMesssage(message);
   if (!v) return NULL;
@@ -278,44 +279,36 @@ static JSValueRef callJSFunc(void* api, void* message, JSValueRef* exception) {
     printf("directy object calling\n");
     objectInstance = JSObjectPtr(new JSObject(toJSObject(picoToJS(apiObj, NULL, (ContextAPI*)api))));
   }
-    JSValueRef result;
-    JSValueRef* arguments = NULL;
-    picojson::value::array args = v->get("arguments").get<picojson::value::array>();
-    arguments = picoArrayToJSValueArray(v->get("arguments"), (ContextAPI*)api);
-
-    std::string cmd = v->get("cmd").to_str();
-    if (cmd == "__constructor__") {
-      printf("calling constructor\n");
-      result = JSObjectCallAsConstructor(
-          gContext,
-          static_cast<JSObjectRef>(objectInstance->getObject()),
-          args.size(),
-          arguments,
-          exception);
-    }
-    else {
-      JSObjectPtr functionObject = JavaScriptInterfaceSingleton::Instance().getJSObjectProperty(gContext, objectInstance, cmd.c_str());
-      result = JSObjectCallAsFunction(
-          gContext,
-          static_cast<JSObjectRef>(functionObject->getObject()),
-          static_cast<JSObjectRef>(objectInstance->getObject()),
-          args.size(),
-          arguments,
-          exception);
-    }
-    if (isJSObject(result)) {
-      //setObjRef(toJSObject(result));
-      result = wrapResult(result);
-    }
-    return result;
-}
-static void processMessage(void* api, void* message) {
-  JSValueRef exception;
-  callJSFunc(api, message, &exception);
-}
-static void processSyncMessage(void* api, void* message) {
+  JSValueRef result;
+  JSValueRef* arguments = NULL;
   JSValueRef exception = NULL;
-  JSValueRef result = callJSFunc(api, message, &exception);
+  picojson::value::array args = v->get("arguments").get<picojson::value::array>();
+  arguments = picoArrayToJSValueArray(v->get("arguments"), (ContextAPI*)api);
+
+  std::string cmd = v->get("cmd").to_str();
+  if (cmd == "__constructor__") {
+    printf("calling constructor\n");
+    result = JSObjectCallAsConstructor(
+        gContext,
+        static_cast<JSObjectRef>(objectInstance->getObject()),
+        args.size(),
+        arguments,
+        &exception);
+  }
+  else {
+    JSObjectPtr functionObject = JavaScriptInterfaceSingleton::Instance().getJSObjectProperty(gContext, objectInstance, cmd.c_str());
+    result = JSObjectCallAsFunction(
+        gContext,
+        static_cast<JSObjectRef>(functionObject->getObject()),
+        static_cast<JSObjectRef>(objectInstance->getObject()),
+        args.size(),
+        arguments,
+        &exception);
+  }
+  if (isJSObject(result)) {
+    //setObjRef(toJSObject(result));
+    result = wrapResult(result);
+  }
   if (!result)
     printf("result is null to process message: %s\n", message);
   JSObjectRef resp = makeJSObject();
@@ -325,6 +318,14 @@ static void processSyncMessage(void* api, void* message) {
   }
   if (result)
     setProperty(resp, "result", result);
+  setProperty(resp, "arguments", wrapResult(makeJSArray(args.size(), arguments)));
+  return resp;
+}
+static void processMessage(void* api, void* message) {
+  callJSFunc(api, message);
+}
+static void processSyncMessage(void* api, void* message) {
+  JSValueRef resp = callJSFunc(api, message);
   ((ContextAPI*)api)->SetSyncReply((toJSON(resp).c_str()));
   wait->Signal();
 }
@@ -337,7 +338,6 @@ int init_jsc() {
   DIR *dir;
   struct dirent *ent;
   gContext = JSGlobalContextCreateInGroup(NULL, NULL);
-  //JSEvaluateScript(gContext, toJSString("function flatten(obj) { var result = Object.create(obj); for(var key in result) { result[key] = result[key]; } return result}"), NULL, NULL, 1, NULL);
   JavaScriptInterface& jsInterface = JavaScriptInterfaceSingleton::Instance();
   JSObjectPtr globalObj = jsInterface.getGlobalObject(gContext);
   JSObjectPtr tizenObj(new JSObject(makeJSObject()));
