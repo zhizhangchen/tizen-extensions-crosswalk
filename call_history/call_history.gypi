@@ -35,6 +35,15 @@
       'dependencies': [
         'ewebkit2',
       ],
+      'conditions': [
+        ['type=="mobile"', {
+          'link_settings': {
+            'libraries': [
+              '-ldpl-efl'
+            ],
+          }
+        }],
+      ],
     },
     {
       'target_name': 'jsc-wrapper',

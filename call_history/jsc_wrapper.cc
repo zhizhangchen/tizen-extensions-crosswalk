@@ -16,8 +16,7 @@ static int init_jsc() __attribute__((constructor));
 #include "common/extension_adapter.h"
 #include <stdint.h>
 static JSGlobalContextRef gContext;
-static PluginPtr plugin;
-static PluginPtr tizen_plugin;
+static std::vector<PluginPtr>plugins;
 //static DPL::WaitableEvent* wait =  new DPL::WaitableEvent;
 static DPL::WaitableEvent* wait;
 static DPL::Thread* appThread = WrtDeviceApis::Commons::ThreadPool::getInstance().getThreadRef(WrtDeviceApis::Commons::ThreadEnum::APPLICATION_THREAD);
@@ -83,8 +82,11 @@ static std::string toString(JSContextRef ctx, JSValueRef value) {
 static std::string toString(JSValueRef value) {
   return toString(gContext, value);
 }
+static JSStringRef toJSString(const std::string str) {
+  return JSStringCreateWithUTF8CString(str.c_str());
+}
 static JSValueRef stringToJSValue(const std::string& str) {
-  return JSValueMakeString(gContext, JSStringCreateWithUTF8CString(str.c_str()));
+  return JSValueMakeString(gContext, toJSString(str));
 }
 static JSValueRef toJSNumber(double value) {
   return JSValueMakeNumber(gContext, value);
@@ -95,14 +97,17 @@ static JSObjectRef makeJSArray(size_t count, const JSValueRef elements[]) {
 static JSObjectRef makeJSObject( JSClassRef jsClass = NULL, void* data = NULL) {
   return JSObjectMake(gContext, jsClass, data);
 }
-static std::string toJSON(JSValueRef value) {
-  return toString(JSValueCreateJSONString(gContext, value, 2, 0));
-}
 static JSObjectRef toJSObject(JSValueRef value) {
   return JSValueToObject(gContext, value, NULL);
 }
-static JSValueRef getProperty(JSObjectRef obj, const char* name) {
-  return JSObjectGetProperty(gContext, obj, JSStringCreateWithUTF8CString(name), NULL);
+static std::string toJSON(JSValueRef value) {
+  /*if (isJSObject(value)) 
+    return toString(JSEvaluateScript(gContext, toJSString("JSON.stringify(flatten(this), function(key, value) { return typeof value === 'function' ? '__function__' : value})"), toJSObject(value), NULL, 1, NULL));
+  return toString(value);*/
+  return toString(JSValueCreateJSONString(gContext, value, 2, 0));
+}
+static JSValueRef getProperty(JSObjectRef obj, std::string name) {
+  return JSObjectGetProperty(gContext, obj, JSStringCreateWithUTF8CString(name.c_str()), NULL);
 }
 static std::string getPropertyAsString(JSObjectRef obj, const char* name) {
   return toString(getProperty(obj, name));
@@ -110,9 +115,9 @@ static std::string getPropertyAsString(JSObjectRef obj, const char* name) {
 static JSObjectRef getPropertyAsObject(JSObjectRef obj, const char* name) {
   return toJSObject(getProperty(obj, name));
 }
-static void setProperty(JSObjectRef obj, const char* name, JSValueRef value) {
+static void setProperty(JSObjectRef obj, const std::string name, JSValueRef value) {
   JSValueRef exception = NULL;
-  JSObjectSetProperty(gContext, obj, JSStringCreateWithUTF8CString(name), value, kJSPropertyAttributeNone, &exception);
+  JSObjectSetProperty(gContext, obj, JSStringCreateWithUTF8CString(name.c_str()), value, kJSPropertyAttributeNone, &exception);
 }
 static void setStringProperty(JSObjectRef obj, const char* name, const std::string& value) {
   setProperty(obj, name, stringToJSValue(value));
@@ -120,6 +125,38 @@ static void setStringProperty(JSObjectRef obj, const char* name, const std::stri
 static void setSubProperty(JSObjectRef obj, const char* propertyName, const char* name, JSValueRef value) {
   JSValueRef exception = NULL;
   setProperty(getPropertyAsObject(obj, propertyName), name, value);
+}
+typedef JSValueRef (*object_wrapper_t)(JSObjectRef, JSObjectRef);
+JSValueRef wrapJSValue(JSValueRef value, object_wrapper_t wrapper) {
+  if (JSIsArrayValue(gContext, value)) {
+    JSObjectRef obj = toJSObject(value); 
+    size_t len = JSGetArrayLength(gContext, obj);
+    JSValueRef* newObjs = new JSValueRef[len];
+    for (size_t i = 0; i < len; i++) {
+      newObjs[i] = wrapJSValue(JSGetArrayElement(gContext, obj, i), wrapper);
+    }
+    return makeJSArray(len, newObjs);
+  }
+  else if (isJSObject(value)) {
+    JSObjectRef obj = toJSObject(value); 
+    JSValueRef newObj = wrapper(makeJSObject(), obj);
+    if (isJSObject(newObj)) {
+      FOREACH(it, JavaScriptInterfaceSingleton::Instance().getObjectPropertiesList(gContext, JSObjectPtr(new JSObject(obj)))) {
+        setProperty(toJSObject(newObj), *it, wrapJSValue(getProperty(obj, *it), wrapper));
+      }
+    }
+    return newObj;
+  }
+  else 
+    return value;
+}
+JSValueRef _wrapResult(JSObjectRef newObj, JSObjectRef obj) {
+  setProperty(newObj, "__obj_ref", toJSNumber((uintptr_t)obj));
+  if (JSObjectIsFunction(gContext, obj)) {
+    return stringToJSValue("__function__");
+  }
+  else
+    return newObj;
 }
 void setObjRef(JSObjectRef obj) {
   if (JSIsArrayValue(gContext, obj)) {
@@ -132,6 +169,9 @@ void setObjRef(JSObjectRef obj) {
   else if (isJSObject(obj)) {
       setProperty(obj, "__obj_ref", toJSNumber((uintptr_t)obj));
   }
+}
+JSValueRef wrapResult(JSValueRef result) {
+  return wrapJSValue(result, _wrapResult);
 }
 JSValueRef general_cb (JSContextRef ctx, JSObjectRef function, JSObjectRef thisObject, size_t argumentCount, const JSValueRef arguments[], JSValueRef* exception){
   printf("#########################\ngeneral_cb called!\n############################\n");
@@ -233,8 +273,16 @@ static JSValueRef* picoArrayToJSValueArray(const picojson::value& value, Context
 static JSValueRef callJSFunc(void* api, void* message, JSValueRef* exception) {
   printf("callJSFunc: %s\n", message);
   picojson::value* v = parseMesssage(message);
-  JSObjectPtr objectInstance = objectInstances[v->get("api").to_str()];
   if (!v) return NULL;
+  JSObjectPtr objectInstance;
+  picojson::value apiObj = v->get("api");
+  if (apiObj.is<std::string>()){
+    objectInstance = objectInstances[apiObj.to_str()];
+  }
+  else {
+    printf("directy object calling\n");
+    objectInstance = JSObjectPtr(new JSObject(toJSObject(picoToJS(apiObj, NULL, (ContextAPI*)api))));
+  }
     JSValueRef result;
     JSValueRef* arguments = NULL;
     picojson::value::array args = v->get("arguments").get<picojson::value::array>();
@@ -242,6 +290,7 @@ static JSValueRef callJSFunc(void* api, void* message, JSValueRef* exception) {
 
     std::string cmd = v->get("cmd").to_str();
     if (cmd == "__constructor__") {
+      printf("calling constructor\n");
       result = JSObjectCallAsConstructor(
           gContext, 
           static_cast<JSObjectRef>(objectInstance->getObject()),
@@ -259,8 +308,10 @@ static JSValueRef callJSFunc(void* api, void* message, JSValueRef* exception) {
           arguments,
           exception);
     }
-    if (isJSObject(result))
-      setObjRef(toJSObject(result));
+    if (isJSObject(result)) {
+      //setObjRef(toJSObject(result));
+      result = wrapResult(result);
+    }
     return result;
 }
 static void processMessage(void* api, void* message) {
@@ -268,7 +319,7 @@ static void processMessage(void* api, void* message) {
   callJSFunc(api, message, &exception);
 }
 static void processSyncMessage(void* api, void* message) {
-  JSValueRef exception;
+  JSValueRef exception = NULL;
   JSValueRef result = callJSFunc(api, message, &exception);
   if (!result)
     printf("result is null to process message: %s\n", message);
@@ -279,7 +330,7 @@ static void processSyncMessage(void* api, void* message) {
   }
   if (result)
     setProperty(resp, "result", result);
-  ((ContextAPI*)api)->SetSyncReply(strdup(toJSON(resp).c_str()));
+  ((ContextAPI*)api)->SetSyncReply((toJSON(resp).c_str()));
   wait->Signal();
 }
 int init_jsc() {
@@ -288,21 +339,45 @@ int init_jsc() {
   ecore_init();
   g_timeout_add(100, iterate_ecore_main_loop, NULL);
   printf("ecore main returned\n");
-  printf("loading callhistory lib\n");
-  const char* libraries[] = {"/usr/lib/wrt-plugins/tizen-callhistory/libwrt-plugins-tizen-callhistory.so","/usr/lib/wrt-plugins/tizen-tizen/libwrt-plugins-tizen-tizen.so"};
+  DIR *dir;
+  struct dirent *ent;
   gContext = JSGlobalContextCreateInGroup(NULL, NULL);
-  for (int i = 0; i < sizeof(libraries)/sizeof(const char*); i ++) {
-    plugin =  Plugin::LoadFromFile(libraries[i]);
-    plugin->OnWidgetStart(0);
-    printf("loaded lib:%s\n", libraries[i]);
-    Plugin::ClassPtrList list = plugin->GetClassList();
-    for (std::list<Plugin::ClassPtr>::iterator it = list->begin(); it != list->end(); it ++) {
-      printf("calling class template of %s\n", (*it)->getName().c_str());
-      if ((*it)->getName() == "tizen")
-        continue;
-      objectInstances[(*it)->getName()] = JavaScriptInterfaceSingleton::Instance().
-                createObject(gContext, *it);
+  //JSEvaluateScript(gContext, toJSString("function flatten(obj) { var result = Object.create(obj); for(var key in result) { result[key] = result[key]; } return result}"), NULL, NULL, 1, NULL);
+  JavaScriptInterface& jsInterface = JavaScriptInterfaceSingleton::Instance();
+  JSObjectPtr globalObj = jsInterface.getGlobalObject(gContext);
+  JSObjectPtr tizenObj(new JSObject(makeJSObject()));
+  jsInterface.setObjectProperty(gContext, globalObj, "tizen", tizenObj);
+  const std::string libPath = "/usr/lib/wrt-plugins";
+  if ((dir = opendir(libPath.c_str())) != NULL) {
+    while ((ent = readdir(dir)) != NULL) {
+      if (ent->d_type == DT_DIR && strcmp(ent->d_name, "..") != 0 && strcmp(ent->d_name, ".") != 0 ) {
+        printf ("loading lib: %s\n", ent->d_name);
+        PluginPtr plugin =  Plugin::LoadFromFile((libPath + "/" + ent->d_name + "/libwrt-plugins-" + ent->d_name + ".so").c_str());
+        plugins.push_back(plugin);
+        plugin->OnWidgetStart(0);
+        plugin->OnFrameLoad(gContext);
+        printf("loaded lib:%s\n", ent->d_name);
+        Plugin::ClassPtrList list = plugin->GetClassList();
+        for (std::list<Plugin::ClassPtr>::iterator it = list->begin(); it != list->end(); it ++) {
+          printf("calling class template of %s\n", (*it)->getName().c_str());
+          if ((*it)->getName() == "tizen") {
+            continue;
+          }
+          JSObjectPtr newObject =  JavaScriptInterfaceSingleton::Instance().createObject(gContext, *it);
+          objectInstances[(*it)->getName()] = newObject;
+          JavaScriptInterfaceSingleton::Instance().setObjectProperty(
+              gContext,
+              (*it)->getParentName() == "GLOBAL_OBJECT" ? globalObj: tizenObj,
+              (*it)->getName(),
+              newObject);
+        }
+        printf("created class object:%s\n\n", ent->d_name);
+      }
     }
+    closedir (dir);
+  } else {
+      perror ("");
+      return 1;
   }
   return 0;
 }
@@ -321,7 +396,7 @@ EXTERN_C PUBLIC_EXPORT void handle_sync_msg(ContextAPI* api, const char* msg){
   //wait->Reset();
 }
 
-EXTERN_C PUBLIC_EXPORT const char* get_object_properties(){
+EXTERN_C PUBLIC_EXPORT char* get_object_properties(){
   picojson::value::object object;
   FOREACH(itr, objectInstances) {
     if (JSObjectIsConstructor(gContext, static_cast<JSObjectRef>(itr->second->getObject()))) {

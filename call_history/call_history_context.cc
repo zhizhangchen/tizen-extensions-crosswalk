@@ -25,14 +25,12 @@ const char CallHistoryContext::name[] = "tizen.callhistory";
 // This will be generated from call_history_api.js.
 extern const char kSource_call_history_api[];
 
-typedef char* (*add_change_listener_t)(void*);
-
 template <class FuncType>
 FuncType loadFunc(const char* funcName) {
   FuncType func = (FuncType) dlsym(jsc_handle, funcName);
   const char *dlsym_error = dlerror();
   if (dlsym_error) {
-      std::cerr << "Cannot load symbol: " << dlsym_error <<
+      std::cerr << "Cannot load symbol: " << funcName <<". " << dlsym_error <<
           '\n';
       dlclose(jsc_handle);
   }
@@ -48,15 +46,17 @@ void* load_lib(const char* path, int flag) {
   return handle;
 }
 
-typedef const char* (*get_object_properties_t)();
+typedef char* (*get_object_properties_t)();
 const char* CallHistoryContext::GetJavaScript() {
-  load_lib("/usr/lib/libaccess-control-bypass.so", RTLD_NOW|RTLD_GLOBAL);
-  jsc_handle = load_lib("/usr/lib/libjsc-wrapper.so", RTLD_NOW);
+  load_lib("/usr/lib/libaccess-control-bypass.so", RTLD_LAZY|RTLD_GLOBAL);
+  jsc_handle = load_lib("/usr/lib/libjsc-wrapper.so", RTLD_LAZY);
   get_object_properties_t get_object_properties = loadFunc<get_object_properties_t>("get_object_properties");
   printf("got properties\n");
   std::string jsSource = "var apis = ";
   printf("composing JavaScript\n");
-  jsSource =  jsSource + std::string(get_object_properties()) + ";" + kSource_call_history_api;
+  char* obj_properties = get_object_properties();
+  jsSource =  jsSource + std::string(obj_properties) + ";" + kSource_call_history_api;
+  free(obj_properties);
   printf("got JavaScript\n");
   return strdup(jsSource.c_str());
 }

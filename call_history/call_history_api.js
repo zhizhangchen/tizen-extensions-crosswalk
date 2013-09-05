@@ -57,11 +57,17 @@ var postMessage = (function() {
     });
     resp = send_msg(request);
     //throw request;
-    respObj = ((resp === undefined || resp === "") ? undefined : JSON.parse(resp));
-    if (respObj.exception) {
+    respObj = ((resp === undefined || resp === "" || resp == "undefined") ? undefined : JSON.parse(resp, function(key, value) {
+      if (value === "__function__")
+        return function () {
+          postMessage(this, key, arguments);
+        }
+      return value;
+    }));
+    if (respObj && respObj.exception) {
       throw respObj.exception;
     }
-    return respObj.result;
+    return respObj && respObj.result;
   }
 })();
 window.tizen = window.tizen || {};
