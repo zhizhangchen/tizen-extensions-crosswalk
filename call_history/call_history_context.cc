@@ -41,7 +41,7 @@ void* load_lib(const char* path, int flag) {
   void* handle = NULL;
   if (!(handle = dlopen(path, flag)))
     printf("Error loading %s:%s\n", path, dlerror());
-  else 
+  else
     printf("#############Loaded %s\n", path);
   return handle;
 }

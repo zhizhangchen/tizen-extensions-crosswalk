@@ -101,9 +101,6 @@ static JSObjectRef toJSObject(JSValueRef value) {
   return JSValueToObject(gContext, value, NULL);
 }
 static std::string toJSON(JSValueRef value) {
-  /*if (isJSObject(value)) 
-    return toString(JSEvaluateScript(gContext, toJSString("JSON.stringify(flatten(this), function(key, value) { return typeof value === 'function' ? '__function__' : value})"), toJSObject(value), NULL, 1, NULL));
-  return toString(value);*/
   return toString(JSValueCreateJSONString(gContext, value, 2, 0));
 }
 static JSValueRef getProperty(JSObjectRef obj, std::string name) {
@@ -129,7 +126,7 @@ static void setSubProperty(JSObjectRef obj, const char* propertyName, const char
 typedef JSValueRef (*object_wrapper_t)(JSObjectRef, JSObjectRef);
 JSValueRef wrapJSValue(JSValueRef value, object_wrapper_t wrapper) {
   if (JSIsArrayValue(gContext, value)) {
-    JSObjectRef obj = toJSObject(value); 
+    JSObjectRef obj = toJSObject(value);
     size_t len = JSGetArrayLength(gContext, obj);
     JSValueRef* newObjs = new JSValueRef[len];
     for (size_t i = 0; i < len; i++) {
@@ -138,7 +135,7 @@ JSValueRef wrapJSValue(JSValueRef value, object_wrapper_t wrapper) {
     return makeJSArray(len, newObjs);
   }
   else if (isJSObject(value)) {
-    JSObjectRef obj = toJSObject(value); 
+    JSObjectRef obj = toJSObject(value);
     JSValueRef newObj = wrapper(makeJSObject(), obj);
     if (isJSObject(newObj)) {
       FOREACH(it, JavaScriptInterfaceSingleton::Instance().getObjectPropertiesList(gContext, JSObjectPtr(new JSObject(obj)))) {
@@ -147,7 +144,7 @@ JSValueRef wrapJSValue(JSValueRef value, object_wrapper_t wrapper) {
     }
     return newObj;
   }
-  else 
+  else
     return value;
 }
 JSValueRef _wrapResult(JSObjectRef newObj, JSObjectRef obj) {
@@ -177,11 +174,9 @@ JSValueRef general_cb (JSContextRef ctx, JSObjectRef function, JSObjectRef thisO
   printf("#########################\ngeneral_cb called!\n############################\n");
   CallbackData* cb_data = (CallbackData*)JSObjectGetPrivate(getPropertyAsObject(function, "_cb_data"));
   JSObjectRef resp = makeJSObject();
-  setProperty(resp, "arguments", makeJSArray(argumentCount, arguments));
+  setProperty(resp, "arguments", wrapResult(makeJSArray(argumentCount, arguments)));
   if (!cb_data->_reply_id.empty()){
     setStringProperty(resp, "_reply_id", cb_data->_reply_id.c_str());
-    for (size_t i = 0; i < argumentCount; i ++)
-      setObjRef(toJSObject(arguments[i]));
   }
   else {
     setStringProperty(resp, "eventType", getPropertyAsString(function, "name"));
@@ -207,7 +202,7 @@ static picojson::value* parseMesssage(void* message) {
   picojson::parse(v, msg, msg + strlen(msg), &err);
   if (!err.empty()) {
     std::cout << "Ignoring message.\n";
-    delete &v; 
+    delete &v;
     return NULL;
   }
   return &v;
@@ -292,7 +287,7 @@ static JSValueRef callJSFunc(void* api, void* message, JSValueRef* exception) {
     if (cmd == "__constructor__") {
       printf("calling constructor\n");
       result = JSObjectCallAsConstructor(
-          gContext, 
+          gContext,
           static_cast<JSObjectRef>(objectInstance->getObject()),
           args.size(),
           arguments,
@@ -301,7 +296,7 @@ static JSValueRef callJSFunc(void* api, void* message, JSValueRef* exception) {
     else {
       JSObjectPtr functionObject = JavaScriptInterfaceSingleton::Instance().getJSObjectProperty(gContext, objectInstance, cmd.c_str());
       result = JSObjectCallAsFunction(
-          gContext, 
+          gContext,
           static_cast<JSObjectRef>(functionObject->getObject()),
           static_cast<JSObjectRef>(objectInstance->getObject()),
           args.size(),
@@ -387,7 +382,7 @@ int init_jsc() {
 EXTERN_C PUBLIC_EXPORT void handle_msg(ContextAPI* api, const char* msg) {
   appThread->PushEvent(api, &processMessage, &deleteMessage, (void*)strdup(msg));
 }
-  
+
 EXTERN_C PUBLIC_EXPORT void handle_sync_msg(ContextAPI* api, const char* msg){
   wait =  new DPL::WaitableEvent;
   appThread->PushEvent(api, &processSyncMessage, &deleteMessage, (void*) strdup(msg));
