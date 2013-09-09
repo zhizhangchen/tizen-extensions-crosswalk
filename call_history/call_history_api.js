@@ -210,18 +210,21 @@ var postMessage = (function() {
     });
 
     request = JSON.stringify({api: api, cmd: func, arguments: Array.prototype.slice.call(args, 0)}, function (key, value) {
-      if (typeof value === "function")
+      if (typeof value === "function") {
         return "__function__:" + (value._reply_id ? value._reply_id : "");
+      }
       else if  (value === undefined) {
         return "__undefined__";
       }
       else if  (Number.isNaN(value)) {
         return "__NaN__";
       }
+      else if  (value && value.__obj_ref) {
+        return {__obj_ref: value.__obj_ref};
+      }
       else return value;
     });
     resp = send_msg(request);
-    //throw request;
     respObj = ((resp === undefined || resp === "" || resp == "undefined") ? undefined : JSON.parse(resp, function(key, value) {
       if (value === "__function__")
         return function () {
@@ -232,12 +235,9 @@ var postMessage = (function() {
     if (respObj && respObj.exception) {
       throw respObj.exception;
     }
-    console.log("args before extend:"+ JSON.stringify(args));
-    respObj.arguments.forEach(function (arg, i) {
+    respObj && respObj.arguments && respObj.arguments.forEach(function (arg, i) {
       jQuery.extend(true, args[i], arg);
     });
-    console.log("resp arguments:"+ JSON.stringify(respObj.arguments));
-    console.log("args after extend:"+ JSON.stringify(args));
     return respObj && respObj.result;
   }
 })();
@@ -262,3 +262,4 @@ for (var api in apis) {
     }.bind({api:api, func:func});
   })
 }
+postMessage("__frame_loaded__",  "", {});

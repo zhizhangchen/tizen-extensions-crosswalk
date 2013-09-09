@@ -3,7 +3,17 @@
 	hello
 	<script>
         document.write("From JavaScript");
-        var event_init = {
+        var calendarListCB=function(calendars){                                                       
+                console.assert(calendars != null);                                                                
+                console.assert(calendars.length > 0,"calendar.length is not more than 0");                           
+                console.assert(calendars[0].id === default_calendar.id, "first calendar returned is the default one");
+                console.log("everything is good: " + JSON.stringify(calendars));
+            };                                                           
+            var default_calendar = tizen.calendar.getDefaultCalendar("EVENT");
+            console.log("got default calendar: " + JSON.stringify(default_calendar));
+            tizen.calendar.getCalendars("EVENT", calendarListCB);
+
+        /*var event_init = {
           startDate: new tizen.TZDate(2011, 3, 30, 10, 0),
           duration: new tizen.TimeDuration(1, "HOURS")
         },
@@ -125,7 +135,7 @@
               console.log("Exception:" +e);
             }
 
-        }, NaN);
+        }, null);*/
 
 	</script>
 	</body>
