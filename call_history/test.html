@@ -3,7 +3,31 @@
 	hello
 	<script>
         document.write("From JavaScript");
-        var calendarListCB=function(calendars){                                                       
+        var assert_true = function (exp, message){
+          console.assert(exp, message);
+        }
+        var task_init = {description:"HTML5 Introduction",
+                  summary:"HTML5 Webinar ",                                               
+                          startDate: new tizen.TZDate(2011, 3, 30, 10, 0),     
+                                  dueDate: new tizen.TZDate(2011, 5, 30, 10, 0),
+                                          location:"Huesca"};       
+        var calendar = tizen.calendar.getDefaultCalendar("TASK");                     
+        var ev = new tizen.CalendarTask(task_init);                              
+        calendar.add(ev);                                 
+        var get_ev = calendar.get(ev.id);                                      
+        assert_true(ev.dueDate.equalsTo(get_ev.dueDate), "dates should be equal");
+
+        var exp1 = new tizen.TZDate(2011, 11, 30, 12, 40, 0, 0);                                                                 
+        var RecurrenceRule_init = {interval: 2,                                                                                  
+                                       occurrenceCount: 10,                                                                      
+                                       daysOfTheWeek: ["MO","TU"],                                                               
+                                       setPositions: [-1,-2],                                                                    
+                                       exceptions:[exp1]};                                                                       
+            var RecurrenceRule = new tizen.CalendarRecurrenceRule("DAILY",RecurrenceRule_init);                                      
+            console.log(JSON.stringify(RecurrenceRule));
+            //assert_true(RecurrenceRule.frequency in RecurrenceRuleFrequency, "CalendarRecurrenceRule attribute frequency check");
+
+        /*var calendarListCB=function(calendars){                                                       
                 console.assert(calendars != null);                                                                
                 console.assert(calendars.length > 0,"calendar.length is not more than 0");                           
                 console.assert(calendars[0].id === default_calendar.id, "first calendar returned is the default one");
@@ -11,7 +35,7 @@
             };                                                           
             var default_calendar = tizen.calendar.getDefaultCalendar("EVENT");
             console.log("got default calendar: " + JSON.stringify(default_calendar));
-            tizen.calendar.getCalendars("EVENT", calendarListCB);
+            tizen.calendar.getCalendars("EVENT", calendarListCB);*/
 
         /*var event_init = {
           startDate: new tizen.TZDate(2011, 3, 30, 10, 0),

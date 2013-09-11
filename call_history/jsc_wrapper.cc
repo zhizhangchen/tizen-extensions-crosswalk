@@ -118,6 +118,7 @@ static JSValueRef getProperty(JSObjectRef obj, std::string name) {
   if (exception)
     printf("exception when getting property:%s\n", name.c_str());
     //LogDebug("Exception when getting property, name:" << name << ", exception:" << toString(exception));
+  LogDebug("getting property:" << name);
   JSStringRelease(jsName);
   return prop;
 }
@@ -149,7 +150,7 @@ JSValueRef wrapJSValue(JSValueRef value, object_wrapper_t wrapper) {
       newObjs[i] = wrapJSValue(JSGetArrayElement(gContext, obj, i), wrapper);
     }
     JSValueRef array = makeJSArray(len, newObjs);
-    //delete newObjs;
+    delete newObjs;
     return array;
   }
   else if (isJSObject(value)) {
@@ -174,13 +175,20 @@ JSValueRef _wrapResult(JSObjectRef newObj, JSObjectRef obj) {
     return newObj;
 }
 JSValueRef wrapResult(JSValueRef result) {
+  if (!result)
+    return result;
   return wrapJSValue(result, _wrapResult);
 }
 JSValueRef general_cb (JSContextRef ctx, JSObjectRef function, JSObjectRef thisObject, size_t argumentCount, const JSValueRef arguments[], JSValueRef* exception){
   printf("#########################\ngeneral_cb called!\n############################\n");
   CallbackData* cb_data = (CallbackData*)JSObjectGetPrivate(getPropertyAsObject(function, "_cb_data"));
+  if (!cb_data) {
+    LogError("cb_data is NULL!");
+    return NULL;
+  }
   JSObjectRef resp = makeJSObject();
-  setProperty(resp, "arguments", wrapResult(makeJSArray(argumentCount, arguments)));
+  if (argumentCount > 0)
+    setProperty(resp, "arguments", wrapResult(makeJSArray(argumentCount, arguments)));
   if (!cb_data->_reply_id.empty()){
     LogDebug( "callback to _reply_id:" << cb_data->_reply_id);
     setStringProperty(resp, "_reply_id", cb_data->_reply_id.c_str());
@@ -232,7 +240,7 @@ static JSValueRef picoToJS(picojson::value& value, const char* key,  ContextAPI*
       picojson::value::array picoArray = value.get<picojson::value::array>();
       JSValueRef* elementes = picoArrayToJSValueArray(value, api);
       JSValueRef array = makeJSArray(picoArray.size(), elementes);
-      //delete  elementes;
+      delete  elementes;
       return array;
     }
     else if (value.is<std::string>()){
@@ -287,9 +295,7 @@ void createGlobalContext() {
     FOREACH(itr, plugins) {
       (*itr)->OnFrameUnload(gContext);
     }
-    printf("Releasing global context\n");
     objectInstances.clear();
-    //JSGlobalContextRelease(gContext);
   }
   printf("Global Context released!\n");
   //gContext = JSGlobalContextCreate(0);
@@ -299,7 +305,7 @@ void createGlobalContext() {
   JSObjectPtr tizenObj(new JSObject(makeJSObject()));
   jsInterface.setObjectProperty(gContext, globalObj, "tizen", tizenObj);
   FOREACH(itr, plugins) {
-    (*itr)->OnWidgetStart(0);
+    //(*itr)->OnWidgetStart(0);
     (*itr)->OnFrameLoad(gContext);
     Plugin::ClassPtrList list = (*itr)->GetClassList();
     for (std::list<Plugin::ClassPtr>::iterator it = list->begin(); it != list->end(); it ++) {
@@ -316,6 +322,11 @@ void createGlobalContext() {
           newObject);
     }
   }
+    printf("Releasing global context\n");
+    JSGlobalContextRelease(gContext);
+    gContext = NULL;
+    printf("Released global context\n");
+    return;
 }
 static JSValueRef callJSFunc(void* api, void* message) {
   //printf("callJSFunc: %s\n", message);
@@ -329,9 +340,14 @@ static JSValueRef callJSFunc(void* api, void* message) {
       LogDebug("__frame_loaded__ message received!");
       printf("#################################################\n__frame_loaded__ message received!\n");
       createGlobalContext();
+      //JSGarbageCollect(gContext);
       return makeJSObject();
     }
     objectInstance = objectInstances[apiObj.to_str()];
+  }
+  else if (apiObj.is<picojson::null>()){
+      LogError("api is null!");
+      return makeJSObject();
   }
   else {
     //printf("directy object calling\n");
@@ -368,11 +384,11 @@ static JSValueRef callJSFunc(void* api, void* message) {
         arguments,
         &exception);
   }
-  if (isJSObject(result)) {
-    result = wrapResult(result);
-  }
   if (!result)
     printf("result is null to process message: %s\n", (const char*)message);
+  else if (isJSObject(result)) {
+    result = wrapResult(result);
+  }
   JSObjectRef resp = makeJSObject();
   if (exception) {
     printf("exception:%s\n", toString(exception).c_str());
@@ -384,7 +400,7 @@ static JSValueRef callJSFunc(void* api, void* message) {
   setProperty(resp, "arguments", wrapResult(makeJSArray(args.size(), arguments)));
   //JSGarbageCollect(gContext);
   delete v;
-  //delete arguments;
+  delete arguments;
   return resp;
 }
 static void processMessage(void* api, void* message) {
